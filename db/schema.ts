@@ -4,6 +4,7 @@ import {
   integer,
   uniqueIndex,
   index,
+  primaryKey,
 } from 'drizzle-orm/sqlite-core';
 export const accounts = sqliteTable(
   'accounts',
@@ -30,6 +31,7 @@ export const transactions = sqliteTable(
       .references(() => accounts.id, { onDelete: 'cascade' }),
     date: text('date').notNull(),
     description: text('description').notNull(),
+    subDescription: text('sub_description').notNull().default(''),
     amount: integer('amount').notNull(),
     fingerprint: text('fingerprint').notNull(),
     importId: text('import_id').notNull(),
@@ -57,4 +59,16 @@ export const imports = sqliteTable(
     createdAt: text('created_at').notNull(),
   },
   (t) => [index('imports_owner').on(t.userId)],
+);
+
+export const categoryDefinitions = sqliteTable(
+  'category_definitions',
+  {
+    userId: text('user_id').notNull(),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    kind: text('kind').notNull(),
+    archived: integer('archived', { mode: 'boolean' }).notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.id] })],
 );

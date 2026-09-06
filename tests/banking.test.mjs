@@ -86,3 +86,43 @@ test('refunds reduce spending; transfers and investment trades do not inflate to
     { income: 300000, spending: 8000 },
   );
 });
+
+test('optional sub-description maps without becoming required', () => {
+  const csv = parseCsv(
+    'Date,Description,Memo,Amount\n2026-08-01,Card purchase,PET STORE,-12.50',
+  );
+  const m = suggestMapping(csv.headers);
+  assert.equal(m.subDescription, 'Memo');
+  assert.equal(
+    mapTransactions(csv, m).transactions[0].subDescription,
+    'PET STORE',
+  );
+  assert.equal(
+    mapTransactions(csv, { ...m, subDescription: '' }).transactions[0]
+      .subDescription,
+    '',
+  );
+  assert.equal(
+    mapTransactions(csv, { ...m, subDescription: 'Description' }).errors.length,
+    1,
+  );
+});
+test('custom category types determine totals independently of their names', () => {
+  const categories = [
+    { id: 'salary', name: 'Pay', kind: 'income', archived: false },
+    { id: 'pets', name: 'Pets', kind: 'expense', archived: true },
+    { id: 'moving', name: 'Own transfers', kind: 'transfer', archived: false },
+  ];
+  assert.deepEqual(
+    summary(
+      [
+        { category: 'salary', amount: 100000 },
+        { category: 'pets', amount: -2000 },
+        { category: 'pets', amount: 500 },
+        { category: 'moving', amount: 50000 },
+      ],
+      categories,
+    ),
+    { income: 100000, spending: 1500 },
+  );
+});

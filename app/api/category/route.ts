@@ -1,5 +1,5 @@
 import { getDb } from '@/db';
-import { CATEGORIES } from '@/lib/banking';
+import { getCategories } from '@/lib/categories-server';
 import {
   identity,
   json,
@@ -12,7 +12,11 @@ export async function PATCH(request: Request) {
   try {
     const u = await identity(request);
     const b = await body(request);
-    if (!CATEGORIES.includes(b.category))
+    if (
+      !(await getCategories(u.userId)).some(
+        (c) => c.id === b.category && !c.archived,
+      )
+    )
       throw new AppError('Choose a valid category.');
     const result = await getDb()
       .prepare(

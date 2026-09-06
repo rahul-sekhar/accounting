@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { getDb } from '@/db';
+import { getCategories } from '@/lib/categories-server';
 import { identity, json, failure } from '@/lib/server';
 export const dynamic = 'force-dynamic';
 export async function GET() {
@@ -14,7 +15,7 @@ export async function GET() {
         .bind(user.userId),
       db
         .prepare(
-          'SELECT id,account_id,date,description,amount,category,source,confidence FROM transactions WHERE user_id=? ORDER BY date DESC,id',
+          'SELECT id,account_id,date,description,sub_description,amount,category,source,confidence FROM transactions WHERE user_id=? ORDER BY date DESC,id',
         )
         .bind(user.userId),
       db
@@ -27,6 +28,7 @@ export async function GET() {
       accounts: accounts.results,
       transactions: transactions.results,
       imports: imports.results,
+      categories: await getCategories(user.userId),
       aiReady: Boolean(env.OPENAI_API_KEY),
       user: user.displayName,
     });

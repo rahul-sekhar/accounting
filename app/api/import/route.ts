@@ -1,10 +1,5 @@
 import { getDb } from '@/db';
-import {
-  parseCsv,
-  mapTransactions,
-  parseDate,
-  type Mapping,
-} from '@/lib/banking';
+import { parseCsv, mapTransactions, type Mapping } from '@/lib/banking';
 import {
   identity,
   json,
@@ -108,6 +103,7 @@ export async function POST(request: Request) {
           accountId,
           t.date,
           t.description,
+          t.subDescription,
           t.amount,
           hash,
           importId,
@@ -120,9 +116,9 @@ export async function POST(request: Request) {
       statements.push(
         db
           .prepare(
-            'INSERT INTO transactions (id,user_id,account_id,date,description,amount,fingerprint,import_id,created_at) VALUES ' +
-              part.map(() => '(?,?,?,?,?,?,?,?,?)').join(',') +
-              ' ON CONFLICT(user_id,account_id,fingerprint) DO NOTHING',
+            'INSERT INTO transactions (id,user_id,account_id,date,description,sub_description,amount,fingerprint,import_id,created_at) VALUES ' +
+              part.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',') +
+              " ON CONFLICT(user_id,account_id,fingerprint) DO UPDATE SET sub_description=excluded.sub_description WHERE transactions.sub_description='' AND excluded.sub_description!=''",
           )
           .bind(...part.flat()),
       );

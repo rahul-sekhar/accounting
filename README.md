@@ -13,7 +13,7 @@ Private Scotiabank and Wealthsimple CSV account dashboard, built with React/Vine
 
 ## Runtime
 
-The Sites manifest declares `DB`; generated Drizzle migrations live in `drizzle/`. Do not change applied migrations. `OPENAI_API_KEY` must be configured as a hosted secret before AI is available. Optional `OPENAI_MODEL` defaults to `gpt-4.1-mini`. No key is bundled or exposed to the browser. Authorized local secret destination is `.env.local` (ignored); no key has been provisioned yet because secure Platform key tools are unavailable in this task.
+The Sites manifest declares `DB`; generated Drizzle migrations live in `drizzle/`. Do not change applied migrations. `OPENAI_API_KEY` must be configured as a hosted secret before AI is available. Optional `OPENAI_MODEL` defaults to `gpt-4.1-mini`. No key is bundled or exposed to the browser. Authorized local secret destination is `.env.local` (ignored); the app uses the approved API key configured as a hosted secret.
 
 `npm run dev` starts the local Sites preview. Its built-in local sign-in is development-only. `npm run build` builds the Cloudflare Worker and copies the manifest/migrations. `npx drizzle-kit generate` generates schema migrations.
 
@@ -23,4 +23,14 @@ The Sites manifest declares `DB`; generated Drizzle migrations live in `drizzle/
 
 `node tests/api-smoke.mjs` exercises local sign-in, saving and re-importing synthetic transactions, persisted edits/balances, invalid data/currency, missing account IDs and unauthenticated/cross-origin rejection. It uses only localhost and creates a disposable synthetic account; remove that account from the local test database after the run. Local migration configuration is kept under ignored `.wrangler/`.
 
-Type-check and production build passed. Browser interaction/visual QA was not requested and was not performed. The optional WebMCP `start_bank_csv_import` opens the same import dialog without uploading or saving. No supported WebMCP test context was exposed, so its live registration remains unverified. Live AI classification remains unverified pending API credentials. No real bank export has been supplied; the import review handles differing column names and signs explicitly.
+Type-check and production build passed. Browser interaction/visual QA was not requested and was not performed. The optional WebMCP `start_bank_csv_import` opens the same import dialog without uploading or saving. No supported WebMCP test context was exposed, so its live registration remains unverified. Live AI classification was verified with synthetic transactions. No real bank export has been supplied; the import review handles differing column names and signs explicitly.
+
+## CSV mapping and category management
+
+AI mapping receives CSV headers and up to five sample rows and suggests the date, description, optional sub-description, amount layout, sign direction and date format. All suggestions remain editable. Server validation checks the proposed fields and sample data; uncertain dates are flagged. Manual mapping stays available on AI failures.
+
+Sub-descriptions are stored separately, displayed below the primary description, and included in categorization. The existing duplicate identity remains unchanged so old exports do not duplicate on re-import. A matching row can gain a previously missing sub-description; existing nonempty detail and category edits are preserved.
+
+Category management supports adding, renaming, changing type, archiving and restoring. Stable category IDs preserve existing assignments on rename. Archived categories are excluded from new assignments and AI suggestions but keep their historical labels and totals. Uncategorized remains available as the permanent fallback. Custom categories are scoped to the signed-in user and supplied to AI with their types.
+
+`node tests/category-mapping-smoke.mjs` uses synthetic local data to verify live AI CSV mapping, sub-description enrichment, custom AI categories, and category rename/archive/restore. Remove its printed QA account/category IDs from the local test database afterward.

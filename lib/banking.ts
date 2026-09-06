@@ -17,7 +17,36 @@ export const CATEGORIES = [
   'Investments',
   'Other',
 ] as const;
-export type Category = (typeof CATEGORIES)[number];
+export type Category = string;
+export type CategoryKind =
+  | 'expense'
+  | 'income'
+  | 'transfer'
+  | 'investment'
+  | 'unclassified';
+export type CategoryDefinition = {
+  id: string;
+  name: string;
+  kind: CategoryKind;
+  archived: boolean;
+};
+export const DEFAULT_CATEGORIES: CategoryDefinition[] = CATEGORIES.map(
+  (name) => ({
+    id: name,
+    name,
+    kind:
+      name === 'Uncategorized'
+        ? 'unclassified'
+        : ['Income', 'Investment income'].includes(name)
+          ? 'income'
+          : name === 'Transfers'
+            ? 'transfer'
+            : name === 'Investments'
+              ? 'investment'
+              : 'expense',
+    archived: false,
+  }),
+);
 export type Account = {
   id: string;
   bank: string;
@@ -32,6 +61,7 @@ export type Transaction = {
   account_id: string;
   date: string;
   description: string;
+  sub_description?: string;
   amount: number;
   category: Category;
   source: string;
@@ -49,11 +79,13 @@ export type AppData = {
   accounts: Account[];
   transactions: Transaction[];
   imports: ImportRecord[];
+  categories: CategoryDefinition[];
   aiReady: boolean;
   user: string;
 };
 export type CsvData = { headers: string[]; rows: string[][] };
 export type Mapping = {
+  subDescription?: string;
   date: string;
   description: string;
   amount: string;
@@ -64,6 +96,7 @@ export type Mapping = {
   dateFormat: 'YMD' | 'MDY' | 'DMY';
 };
 export type ParsedTransaction = {
+  subDescription: string;
   date: string;
   description: string;
   amount: number;
@@ -148,6 +181,10 @@ export function suggestMapping(headers: string[]): Mapping {
     description: pick([
       /^description$/i,
       /transaction description|details|payee|activity/i,
+    ]),
+    subDescription: pick([
+      /^sub[ -]?description$/i,
+      /description ?2|memo|additional details|notes/i,
     ]),
     amount: pick([/^amount$/i, /net amount|transaction amount|total amount/i]),
     debit,
@@ -237,6 +274,20 @@ export function mapTransactions(
       transactions,
       errors: ['Choose the date, description, and amount columns.'],
     };
+  const columns = [
+    m.date,
+    m.description,
+    ...(m.mode === 'signed' ? [m.amount] : [m.debit, m.credit]),
+    ...(m.subDescription ? [m.subDescription] : []),
+  ];
+  if (
+    columns.some((h) => typeof h !== 'string' || !csv.headers.includes(h)) ||
+    new Set(columns).size !== columns.length
+  )
+    return {
+      transactions,
+      errors: ['Choose a different, valid column for each mapped field.'],
+    };
   csv.rows.forEach((r, index) => {
     if (r.length !== csv.headers.length) {
       errors.push(
@@ -246,6 +297,15 @@ export function mapTransactions(
     }
     const date = parseDate(cell(r, m.date), m.dateFormat);
     const description = cell(r, m.description).trim();
+    const subDescription = m.subDescription
+      ? cell(r, m.subDescription).trim()
+      : '';
+    if (subDescription.length > 500) {
+      errors.push(
+        `Row ${index + 2}: sub-description is longer than 500 characters.`,
+      );
+      return;
+    }
     let amount: number | null;
     if (m.mode === 'split') {
       const dv = cell(r, m.debit),
@@ -271,19 +331,27 @@ export function mapTransactions(
     ]);
     const occurrence = (seen.get(key) || 0) + 1;
     seen.set(key, occurrence);
-    transactions.push({ date, description, amount, occurrence });
+    transactions.push({
+      date,
+      description,
+      subDescription,
+      amount,
+      occurrence,
+    });
   });
   return { transactions, errors };
 }
-export function summary(transactions: Transaction[]) {
+export function summary(
+  transactions: Transaction[],
+  categories: CategoryDefinition[] = DEFAULT_CATEGORIES,
+) {
   let income = 0,
     spending = 0;
   for (const t of transactions) {
-    if (['Transfers', 'Investments'].includes(t.category)) continue;
-    if (
-      ['Income', 'Investment income'].includes(t.category) ||
-      (t.category === 'Uncategorized' && t.amount > 0)
-    )
+    const kind =
+      categories.find((c) => c.id === t.category)?.kind || 'unclassified';
+    if (['transfer', 'investment'].includes(kind)) continue;
+    if (kind === 'income' || (kind === 'unclassified' && t.amount > 0))
       income += t.amount;
     else spending -= t.amount;
   }

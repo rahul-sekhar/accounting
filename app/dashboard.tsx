@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   WalletCards,
   Upload,
@@ -25,6 +25,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import CategoryManager from './category-manager';
 import { NativeSelect } from '@/components/ui/native-select';
 import {
   Table,
@@ -41,7 +42,7 @@ import {
   EmptyDescription,
 } from '@/components/ui/empty';
 import {
-  CATEGORIES,
+  DEFAULT_CATEGORIES,
   parseCsv,
   suggestMapping,
   mapTransactions,
@@ -58,6 +59,7 @@ const initial: AppData = {
   accounts: [],
   transactions: [],
   imports: [],
+  categories: DEFAULT_CATEGORIES,
   aiReady: false,
   user: '',
 };
@@ -137,6 +139,55 @@ export default function Dashboard() {
     [balanceDate, setBalanceDate] = useState(''),
     [balanceError, setBalanceError] = useState('');
   const [aiConfirm, setAiConfirm] = useState(false);
+  const [manageCategories, setManageCategories] = useState(false);
+  const [mappingBusy, setMappingBusy] = useState(false),
+    [mappingNote, setMappingNote] = useState('');
+  const mappingRun = useRef(0);
+  const categoryLabel = (id: string) =>
+    data.categories.find((c) => c.id === id)?.name || id;
+  function changeMapping(value: Mapping) {
+    mappingRun.current++;
+    setMappingBusy(false);
+    setMappingNote(
+      'Mapping edited manually. Review the preview before saving.',
+    );
+    setMapping(value);
+  }
+  async function aiMapping(parsed: CsvData, run: number) {
+    if (!data.aiReady) {
+      setMappingNote(
+        'AI unavailable. Review the suggested headers or map columns manually.',
+      );
+      return;
+    }
+    setMappingBusy(true);
+    setMappingNote('AI is checking the columns and sample rows…');
+    const selected = data.accounts.find((a) => a.id === target);
+    try {
+      const result = await api<{
+        mapping: Mapping;
+        confidence: string;
+        note: string;
+      }>('map-csv', 'POST', {
+        headers: parsed.headers,
+        rows: parsed.rows.slice(0, 5).map((r) => r.map((c) => c.slice(0, 500))),
+        bank: selected?.bank || bank,
+        accountType: selected?.type || accountType,
+      });
+      if (mappingRun.current !== run) return;
+      setMapping(result.mapping);
+      setMappingNote(
+        `AI suggestion · ${result.confidence} confidence. ${result.note} Review before saving.`,
+      );
+    } catch (e) {
+      if (mappingRun.current === run)
+        setMappingNote(
+          `${(e as Error).message} Your current mapping is preserved.`,
+        );
+    } finally {
+      if (mappingRun.current === run) setMappingBusy(false);
+    }
+  }
   const refresh = useCallback(async () => {
     const result = await api<AppData>('data');
     setData(result);
@@ -173,7 +224,7 @@ export default function Dashboard() {
           (t.source === 'ai' && t.confidence !== 'high')
         : t.category === categoryFilter),
   );
-  const totals = summary(scoped),
+  const totals = summary(scoped, data.categories),
     hasBalances = accounts.some((a) => a.balance !== null),
     balance = accounts.reduce((n, a) => n + (a.balance || 0), 0);
   const uncategorized = data.transactions.filter((t) => t.source === 'none'),
@@ -182,14 +233,16 @@ export default function Dashboard() {
         t.category === 'Uncategorized' ||
         (t.source === 'ai' && t.confidence !== 'high'),
     ).length;
-  const spending = CATEGORIES.filter(
-    (c) =>
-      !['Transfers', 'Investments', 'Income', 'Investment income'].includes(c),
-  )
-    .map((category) => ({
-      category,
+  const spending = data.categories
+    .filter((c) => ['expense', 'unclassified'].includes(c.kind))
+    .map((definition) => ({
+      category: definition.id,
       amount: -scoped
-        .filter((t) => t.category === category)
+        .filter(
+          (t) =>
+            t.category === definition.id &&
+            !(definition.kind === 'unclassified' && t.amount > 0),
+        )
         .reduce((n, t) => n + t.amount, 0),
     }))
     .filter((c) => c.amount > 0)
@@ -277,6 +330,10 @@ export default function Dashboard() {
     return () => lifecycle.abort();
   }, []);
   async function loadFile(file?: File) {
+    if (busy) return;
+    const run = ++mappingRun.current;
+    setMappingBusy(false);
+    setMappingNote('');
     setImportError('');
     setCsv(null);
     setMapping(null);
@@ -291,16 +348,21 @@ export default function Dashboard() {
     }
     try {
       const text = await file.text();
+      if (mappingRun.current !== run) return;
       const parsed = parseCsv(text);
       setRaw(text);
       setFilename(file.name);
       setCsv(parsed);
       setMapping(suggestMapping(parsed.headers));
+      void aiMapping(parsed, run);
     } catch (e) {
       setImportError((e as Error).message);
     }
   }
   function startImport(account?: Account) {
+    mappingRun.current++;
+    setMappingBusy(false);
+    setMappingNote('');
     setImportError('');
     setTarget(account?.id || 'new');
     setCsv(null);
@@ -420,6 +482,13 @@ export default function Dashboard() {
           <WalletCards size={26} /> account<span>view</span>
         </a>
         <div className="top-right">
+          <button
+            className="text-button"
+            disabled={loading || !!busy}
+            onClick={() => setManageCategories(true)}
+          >
+            Categories
+          </button>
           <span className="privacy">
             <ShieldCheck size={16} /> Private workspace
           </span>
@@ -680,7 +749,7 @@ export default function Dashboard() {
                         {spending.slice(0, 5).map((s, i) => (
                           <button
                             className="legend-row"
-                            key={s.category}
+                            key={categoryLabel(s.category)}
                             onClick={() => setCategoryFilter(s.category)}
                           >
                             <span className="legend-label">
@@ -689,7 +758,7 @@ export default function Dashboard() {
                                   background: colors[i % colors.length],
                                 }}
                               />
-                              {s.category}
+                              {categoryLabel(s.category)}
                             </span>
                             <strong>{money(s.amount, currency)}</strong>
                           </button>
@@ -763,7 +832,10 @@ export default function Dashboard() {
                   options={[
                     { value: 'all', label: 'All categories' },
                     { value: 'review', label: 'Needs review' },
-                    ...opts([...CATEGORIES]),
+                    ...data.categories.map((c) => ({
+                      value: c.id,
+                      label: c.name + (c.archived ? ' (archived)' : ''),
+                    })),
                   ]}
                 />
               </div>
@@ -783,6 +855,9 @@ export default function Dashboard() {
                       <TableCell className="date-cell">{t.date}</TableCell>
                       <TableCell className="description-cell">
                         {t.description}
+                        {t.sub_description && (
+                          <p className="sub-description">{t.sub_description}</p>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="subtle">
@@ -802,9 +877,14 @@ export default function Dashboard() {
                               setCategory(t.id, e.target.value as Category)
                             }
                           >
-                            {CATEGORIES.map((c) => (
-                              <option key={c}>{c}</option>
-                            ))}
+                            {data.categories
+                              .filter((c) => !c.archived || c.id === t.category)
+                              .map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                  {c.archived ? ' (archived)' : ''}
+                                </option>
+                              ))}
                           </NativeSelect>
                           {t.source === 'ai' && (
                             <span
@@ -899,7 +979,13 @@ export default function Dashboard() {
       <Dialog
         open={showImport}
         onOpenChange={(v) => {
-          if (busy !== 'import') setShowImport(v);
+          if (busy !== 'import') {
+            setShowImport(v);
+            if (!v) {
+              mappingRun.current++;
+              setMappingBusy(false);
+            }
+          }
         }}
       >
         <DialogContent className="import-dialog">
@@ -972,6 +1058,9 @@ export default function Dashboard() {
               <FileSpreadsheet size={28} />
               <strong>{filename || 'Choose or drop a CSV export'}</strong>
               <span>Scotiabank or Wealthsimple · up to 2,000 rows · 5 MB</span>
+              <span>
+                AI uses headers and up to five sample rows to suggest a mapping.
+              </span>
               <input
                 type="file"
                 accept=".csv,text/csv"
@@ -983,28 +1072,56 @@ export default function Dashboard() {
               <>
                 <div className="mapping-heading">
                   <h3>Match your columns</h3>
+                  <button
+                    className="text-button"
+                    disabled={mappingBusy || !data.aiReady}
+                    onClick={() => aiMapping(csv, ++mappingRun.current)}
+                  >
+                    <Sparkles size={14} />
+                    {mappingBusy ? 'Mapping…' : 'Suggest with AI'}
+                  </button>
                   <span className="subtle">{csv.rows.length} rows found</span>
                 </div>
+                {mappingNote && (
+                  <p className="mapping-status" role="status">
+                    {mappingBusy && <LoaderCircle size={15} className="spin" />}
+                    {mappingNote}
+                  </p>
+                )}
                 <div className="form-grid">
-                  {(['date', 'description'] as const).map((key) => (
-                    <Picker
-                      key={key}
-                      label={
-                        key === 'date' ? 'Transaction date' : 'Description'
-                      }
-                      value={mapping[key]}
-                      onChange={(v) => setMapping({ ...mapping, [key]: v })}
-                      options={[
-                        { value: '', label: 'Choose column' },
-                        ...opts(csv.headers),
-                      ]}
-                    />
-                  ))}
+                  {(['date', 'description', 'subDescription'] as const).map(
+                    (key) => (
+                      <Picker
+                        key={key}
+                        label={
+                          key === 'date'
+                            ? 'Transaction date'
+                            : key === 'subDescription'
+                              ? 'Sub-description (optional)'
+                              : 'Description'
+                        }
+                        value={mapping[key] || ''}
+                        onChange={(v) =>
+                          changeMapping({ ...mapping, [key]: v })
+                        }
+                        options={[
+                          {
+                            value: '',
+                            label:
+                              key === 'subDescription'
+                                ? 'Not mapped'
+                                : 'Choose column',
+                          },
+                          ...opts(csv.headers),
+                        ]}
+                      />
+                    ),
+                  )}
                   <Picker
                     label="Amount layout"
                     value={mapping.mode}
                     onChange={(v) =>
-                      setMapping({ ...mapping, mode: v as Mapping['mode'] })
+                      changeMapping({ ...mapping, mode: v as Mapping['mode'] })
                     }
                     options={[
                       { value: 'signed', label: 'One signed amount column' },
@@ -1018,7 +1135,7 @@ export default function Dashboard() {
                     label="Date format"
                     value={mapping.dateFormat}
                     onChange={(v) =>
-                      setMapping({
+                      changeMapping({
                         ...mapping,
                         dateFormat: v as Mapping['dateFormat'],
                       })
@@ -1037,7 +1154,7 @@ export default function Dashboard() {
                       key={key}
                       label={key[0].toUpperCase() + key.slice(1)}
                       value={mapping[key as 'amount' | 'debit' | 'credit']}
-                      onChange={(v) => setMapping({ ...mapping, [key]: v })}
+                      onChange={(v) => changeMapping({ ...mapping, [key]: v })}
                       options={[
                         { value: '', label: 'Choose column' },
                         ...opts(csv.headers),
@@ -1048,7 +1165,7 @@ export default function Dashboard() {
                     label="Amount direction"
                     value={mapping.sign}
                     onChange={(v) =>
-                      setMapping({ ...mapping, sign: v as Mapping['sign'] })
+                      changeMapping({ ...mapping, sign: v as Mapping['sign'] })
                     }
                     options={[
                       {
@@ -1098,6 +1215,11 @@ export default function Dashboard() {
                         <TableCell>{t.date}</TableCell>
                         <TableCell className="description-cell">
                           {t.description}
+                          {t.subDescription && (
+                            <p className="sub-description">
+                              {t.subDescription}
+                            </p>
+                          )}
                         </TableCell>
                         <TableCell className="right amount">
                           {money(
@@ -1129,7 +1251,11 @@ export default function Dashboard() {
           <div className="dialog-actions">
             <button
               className="secondary"
-              onClick={() => setShowImport(false)}
+              onClick={() => {
+                mappingRun.current++;
+                setMappingBusy(false);
+                setShowImport(false);
+              }}
               disabled={!!busy}
             >
               Cancel
@@ -1139,6 +1265,7 @@ export default function Dashboard() {
               onClick={saveImport}
               disabled={
                 !!busy ||
+                mappingBusy ||
                 !preview?.transactions.length ||
                 !!preview?.errors.length ||
                 (target === 'new' && !accountName.trim())
@@ -1201,15 +1328,21 @@ export default function Dashboard() {
           </button>
         </DialogContent>
       </Dialog>
+      <CategoryManager
+        open={manageCategories}
+        onOpenChange={setManageCategories}
+        categories={data.categories}
+        onSaved={refresh}
+      />
       <Dialog open={aiConfirm} onOpenChange={setAiConfirm}>
         <DialogContent className="balance-dialog">
           <DialogHeader>
             <DialogTitle>Suggest transaction categories</DialogTitle>
             <DialogDescription>
-              Send descriptions, amounts, currency, and account type for{' '}
-              {uncategorized.length} uncategorized transactions to OpenAI.
-              Account owner details, account nicknames, and full CSV files are
-              excluded.
+              Send descriptions, sub-descriptions, amounts, currency, and
+              account type for {uncategorized.length} uncategorized transactions
+              to OpenAI. Account owner details, account nicknames, and full CSV
+              files are excluded.
             </DialogDescription>
           </DialogHeader>
           <p className="subtle">
