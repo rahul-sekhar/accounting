@@ -670,33 +670,49 @@ table td {
   gap: 4px;
   align-items: flex-start;
 }
-.review-controls {
-  display: grid;
-  gap: 6px;
-  margin-top: 8px;
-  min-width: 230px;
-}
-.review-controls label,
 .memory-transaction {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
   color: #52657c;
   font-size: 12px;
   line-height: 1.35;
 }
-.review-controls input,
-.memory-transaction input {
-  margin-top: 2px;
-  accent-color: #145bdf;
+.category-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
 }
-.accept-category {
-  justify-self: start;
-  font-size: 12px;
+.ai-status-icon,
+.reviewed-icon,
+.row-menu-trigger {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  background: transparent;
+  color: #617187;
 }
-.reviewed-label {
+.ai-status-icon:hover,
+.reviewed-icon:hover,
+.row-menu-trigger:hover {
+  background: #edf1f6;
+}
+.ai-status-icon {
+  color: #145bdf;
+}
+.reviewed-icon {
   color: #087f6e;
-  font-size: 12px;
+}
+.ai-status-icon.needs-review {
+  color: #a46713;
+  background: #fff7e8;
+}
+.row-actions-menu {
+  width: 168px;
 }
 .ai-evidence {
   margin-top: 7px;
@@ -715,16 +731,6 @@ table td {
   width: 160px;
   font-size: 13px;
   border-color: #e3e8ef;
-}
-.source-badge {
-  font-size: 11px;
-  color: #617187;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.needs-review {
-  color: #a46713;
 }
 .table-footer {
   border-top: 1px solid var(--border);

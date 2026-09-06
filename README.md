@@ -10,7 +10,7 @@ Private Scotiabank and Wealthsimple CSV account dashboard, built with React/Vine
 - Track explicit balance snapshots with their dates. Transaction imports do not imply a current balance or automatically update snapshots. Enter debt as a negative balance.
 - View CAD and USD separately; no exchange-rate conversion. Filter by account, month, and category. Refunds reduce their spending category after categorization. Transfers and investment trades are excluded from income/spending. Uncategorized inflows provisionally count as income and need review.
 - AI suggests categories using OpenAI Responses with a strict JSON schema. Only descriptions (long numeric references masked), integer amounts, currency, opaque request-local account references and account type are sent, with `store: false`. AI does not receive owner identity, account nicknames, dates, or the entire CSV. Descriptions themselves may contain personal information. Manual category changes are preserved. Low-confidence suggestions are flagged for review.
-- Explicit corrections and **Accept category** confirmations become review examples by default. **Use for future categorization** can exclude or restore each review without changing the transaction category. This is bounded reference-based personalization, not model training, and future matches are not guaranteed.
+- Explicit corrections and **Accept category** confirmations become review examples automatically. Per-review controls are intentionally hidden for now. This is bounded reference-based personalization, not model training, and future matches are not guaranteed.
 
 ## Runtime
 

@@ -17,6 +17,7 @@ import {
   Pencil,
   ArrowRight,
   LockKeyhole,
+  MoreHorizontal,
 } from 'lucide-react';
 import {
   Dialog,
@@ -26,6 +27,18 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import CategoryManager from './category-manager';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { NativeSelect } from '@/components/ui/native-select';
 import {
   Table,
@@ -143,7 +156,6 @@ export default function Dashboard() {
     [balanceError, setBalanceError] = useState('');
   const [aiConfirm, setAiConfirm] = useState(false);
   const [manageCategories, setManageCategories] = useState(false);
-  const [learnById, setLearnById] = useState<Record<string, boolean>>({});
   const pendingReviewOperations = useRef(new Map<string, string>());
   const [mappingBusy, setMappingBusy] = useState(false),
     [mappingNote, setMappingNote] = useState('');
@@ -318,12 +330,7 @@ export default function Dashboard() {
             : t,
         ),
       }));
-      setLearnById((current) => ({ ...current, [transaction.id]: saved.memoryEnabled }));
-      setNotice(
-        saved.memoryEnabled
-          ? 'Reviewed · used for future categorization'
-          : 'Reviewed · this transaction only',
-      );
+      setNotice('Category accepted and available for future categorization.');
     } catch (e) {
       setError((e as Error).message);
       if ((e as Error).message.includes('changed')) await refresh().catch(() => undefined);
@@ -915,85 +922,82 @@ export default function Dashboard() {
                       </TableCell>
                       <TableCell>
                         <div className="category-cell">
-                          <NativeSelect
-                            value={t.category}
-                            aria-label={`Category for ${t.description} on ${t.date}`}
-                            disabled={!!busy}
-                            onChange={(e) => {
-                              const next = e.target.value as Category;
-                              void reviewTransaction(
-                                t,
-                                next,
-                                next === t.category ? 'confirm' : 'correct',
-                                learnById[t.id] ?? true,
-                              );
-                            }}
-                          >
-                            {data.categories
-                              .filter((c) => !c.archived || c.id === t.category)
-                              .map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.name}
-                                  {c.archived ? ' (archived)' : ''}
-                                </option>
-                              ))}
-                          </NativeSelect>
-                          {t.source === 'ai' && (
-                            <span
-                              className={
-                                'source-badge ' +
-                                (t.confidence === 'high' ? '' : 'needs-review')
-                              }
+                          <div className="category-row">
+                            <NativeSelect
+                              value={t.category}
+                              aria-label={`Category for ${t.description} on ${t.date}`}
+                              disabled={!!busy}
+                              onChange={(e) => {
+                                const next = e.target.value as Category;
+                                void reviewTransaction(
+                                  t,
+                                  next,
+                                  next === t.category ? 'confirm' : 'correct',
+                                  true,
+                                );
+                              }}
                             >
-                              <Sparkles size={11} />
-                              {t.confidence === 'high' ? 'AI' : 'Review AI'}
-                            </span>
-                          )}
-                          {t.source === 'manual' && (
-                            <span className="source-badge">Reviewed</span>
-                          )}
-                          <div className="review-controls">
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={learnById[t.id] ?? (t.reviewed_at ? Boolean(t.memory_enabled) : true)}
+                              {data.categories
+                                .filter((c) => !c.archived || c.id === t.category)
+                                .map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                    {c.archived ? ' (archived)' : ''}
+                                  </option>
+                                ))}
+                            </NativeSelect>
+                            {t.source === 'ai' && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    className={
+                                      'ai-status-icon ' +
+                                      (t.confidence === 'high' ? '' : 'needs-review')
+                                    }
+                                    aria-label={
+                                      t.confidence === 'high'
+                                        ? 'AI suggestion, high confidence'
+                                        : `Review AI suggestion, ${t.confidence || 'low'} confidence`
+                                    }
+                                  >
+                                    <Sparkles size={15} />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {t.confidence === 'high'
+                                      ? 'AI suggestion · high confidence'
+                                      : `Review AI suggestion · ${t.confidence || 'low'} confidence`}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                            {t.source === 'manual' && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger className="reviewed-icon" aria-label="Reviewed category">
+                                    <CheckCircle2 size={15} />
+                                  </TooltipTrigger>
+                                  <TooltipContent>Reviewed category</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                className="row-menu-trigger"
+                                aria-label={`Actions for ${t.description} on ${t.date}`}
                                 disabled={!!busy}
-                                onChange={(event) => {
-                                  const learn = event.target.checked;
-                                  if (t.reviewed_at)
-                                    void reviewTransaction(
-                                      t,
-                                      t.category,
-                                      learn ? 'memory_enable' : 'memory_disable',
-                                      learn,
-                                    );
-                                  else
-                                    setLearnById((current) => ({ ...current, [t.id]: learn }));
-                                }}
-                              />
-                              Use for future categorization
-                            </label>
-                            {!t.reviewed_at && (
-                              <button
-                                className="text-button accept-category"
-                                disabled={!!busy}
-                                onClick={() =>
-                                  void reviewTransaction(
-                                    t,
-                                    t.category,
-                                    'confirm',
-                                    learnById[t.id] ?? true,
-                                  )
-                                }
                               >
-                                Accept category
-                              </button>
-                            )}
-                            {t.reviewed_at && (
-                              <span className="reviewed-label">
-                                Reviewed · {t.memory_enabled ? 'used for future categorization' : 'this transaction only'}
-                              </span>
-                            )}
+                                <MoreHorizontal size={17} />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="row-actions-menu">
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    void reviewTransaction(t, t.category, 'confirm', true)
+                                  }
+                                >
+                                  <CheckCircle2 /> Accept category
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                           {t.source === 'ai' && t.categorization_evidence && (() => {
                             let evidence: CategorizationEvidence[] = [];

@@ -44,31 +44,6 @@ export default function CategoryManager({
     if (!response.ok) throw new Error(result.error || 'Could not load categorization memory.');
     setMemory({ clusters: result.clusters || [], reviews: result.reviews || [] });
   }
-  async function toggleMemory(review: ReviewMemoryRow, enabled: boolean) {
-    setSaving(true);
-    setError('');
-    try {
-      const response = await fetch('/api/category', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: review.transactionId,
-          category: review.categoryId,
-          action: enabled ? 'memory_enable' : 'memory_disable',
-          learn: enabled,
-          operationId: crypto.randomUUID(),
-          expectedRevision: review.revision,
-        }),
-      });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error || 'Could not update memory.');
-      await Promise.all([loadMemory(), onSaved()]);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
   async function save(item: CategoryDefinition | undefined, archive?: boolean) {
     setSaving(true);
     setError('');
@@ -238,7 +213,7 @@ export default function CategoryManager({
           ) : (
             <div className="memory-view">
               <p className="import-note">
-                These are your latest explicit reviews. The AI may use enabled examples as context; this is reference-based personalization, not training or a guaranteed rule.
+                These are your latest explicit reviews. The AI may use them as context; this is reference-based personalization, not training or a guaranteed rule.
               </p>
               {!memory ? (
                 <p className="subtle">Loading categorization memory…</p>
@@ -248,7 +223,7 @@ export default function CategoryManager({
                 <>
                   <div className="memory-summary">
                     <strong>{memory.clusters.length} active patterns</strong>
-                    <span>{memory.reviews.filter((review) => review.memoryEnabled).length} enabled reviewed transactions</span>
+                    <span>{memory.reviews.length} reviewed transactions</span>
                   </div>
                   {memory.clusters.map((cluster) => (
                     <details className="memory-cluster" key={cluster.clusterId}>
@@ -268,14 +243,7 @@ export default function CategoryManager({
                   <h3>Contributing transactions</h3>
                   <div className="memory-transactions">
                     {memory.reviews.map((review) => (
-                      <label key={review.transactionId} className="memory-transaction">
-                        <input
-                          type="checkbox"
-                          aria-label={`Use ${review.description} for future categorization`}
-                          checked={Boolean(review.memoryEnabled)}
-                          disabled={saving || review.categoryId === 'Uncategorized' || categories.find((category) => category.id === review.categoryId)?.archived}
-                          onChange={(event) => void toggleMemory(review, event.target.checked)}
-                        />
+                      <div key={review.transactionId} className="memory-transaction">
                         <span>
                           <strong>{review.description}</strong>
                           <small>
@@ -284,7 +252,7 @@ export default function CategoryManager({
                             {review.origin === 'legacy_backfill' ? ' · migrated prior decision' : ''}
                           </small>
                         </span>
-                      </label>
+                      </div>
                     ))}
                   </div>
                 </>
