@@ -66,6 +66,19 @@ export type Transaction = {
   category: Category;
   source: string;
   confidence: string | null;
+  category_revision: number;
+  reviewed_at: string | null;
+  memory_enabled: number | null;
+  categorization_evidence: string | null;
+};
+export type CategorizationEvidence = {
+  memoryId: string;
+  categoryId: string;
+  categoryName: string;
+  description: string;
+  subDescription: string;
+  reviewedTransactionCount: number;
+  conflicting: boolean;
 };
 export type ImportRecord = {
   id: string;
@@ -102,6 +115,11 @@ export type ParsedTransaction = {
   amount: number;
   occurrence: number;
 };
+export function needsReview(transaction: Pick<Transaction, 'category' | 'source' | 'confidence' | 'reviewed_at'>) {
+  if (transaction.category === 'Uncategorized') return true;
+  if (transaction.reviewed_at) return false;
+  return transaction.source === 'ai' && transaction.confidence !== 'high';
+}
 export function parseCsv(text: string): CsvData {
   if (text.length > 5_000_000)
     throw new Error('Choose a CSV smaller than 5 MB.');

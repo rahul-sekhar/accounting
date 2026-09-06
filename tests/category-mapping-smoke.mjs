@@ -154,8 +154,17 @@ assert.equal(
   200,
 );
 assert.equal(
-  (await req('category', 'PATCH', { id: pet.id, category: custom.id })).status,
-  400,
+  (
+    await req('category', 'PATCH', {
+      id: pet.id,
+      category: custom.id,
+      action: 'confirm',
+      learn: true,
+      operationId: crypto.randomUUID(),
+      expectedRevision: pet.category_revision,
+    })
+  ).status,
+  200,
 );
 data = (await req('data')).data;
 assert.equal(
@@ -173,7 +182,17 @@ assert.equal(
   200,
 );
 assert.equal(
-  (await req('category', 'PATCH', { id: pet.id, category: custom.id })).status,
+  (
+    await req('category', 'PATCH', {
+      id: pet.id,
+      category: custom.id,
+      action: 'confirm',
+      learn: true,
+      operationId: crypto.randomUUID(),
+      expectedRevision: data.transactions.find((t) => t.id === pet.id)
+        .category_revision,
+    })
+  ).status,
   200,
 );
 console.log(

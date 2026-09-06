@@ -670,6 +670,46 @@ table td {
   gap: 4px;
   align-items: flex-start;
 }
+.review-controls {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 230px;
+}
+.review-controls label,
+.memory-transaction {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #52657c;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.review-controls input,
+.memory-transaction input {
+  margin-top: 2px;
+  accent-color: #145bdf;
+}
+.accept-category {
+  justify-self: start;
+  font-size: 12px;
+}
+.reviewed-label {
+  color: #087f6e;
+  font-size: 12px;
+}
+.ai-evidence {
+  margin-top: 7px;
+  color: #52657c;
+  font-size: 12px;
+}
+.ai-evidence summary {
+  cursor: pointer;
+  color: #145bdf;
+}
+.ai-evidence p {
+  margin-top: 5px;
+}
 .category-cell [data-slot='native-select'] {
   min-height: 32px;
   width: 160px;
@@ -1039,6 +1079,88 @@ table td {
   display: flex !important;
   flex-direction: column;
   gap: 20px !important;
+}
+.manager-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 4px;
+  margin-bottom: 18px;
+  background: #edf1f6;
+  border-radius: 9px;
+}
+.manager-tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 12px;
+  color: #52657c;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+}
+.manager-tabs button.active {
+  color: #182b40;
+  background: #fff;
+  box-shadow: 0 1px 3px #17324f18;
+}
+.memory-view {
+  display: grid;
+  gap: 14px;
+}
+.memory-summary,
+.memory-alternative {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+.memory-summary {
+  padding: 13px;
+  border-radius: 9px;
+  background: #e9f1ff;
+}
+.memory-cluster {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px;
+}
+.memory-cluster summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.memory-cluster summary span:last-child {
+  color: #617187;
+  font-size: 12px;
+  font-weight: 500;
+}
+.memory-cluster > p {
+  margin: 8px 0;
+}
+.memory-alternative {
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+.memory-transactions {
+  display: grid;
+  gap: 8px;
+}
+.memory-transaction {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+.memory-transaction > span {
+  display: grid;
+  gap: 3px;
+}
+.memory-transaction small {
+  color: #617187;
 }
 .category-scroll {
   overflow: auto;

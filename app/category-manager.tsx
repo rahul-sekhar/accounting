@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/ui/native-select';
 import type { CategoryDefinition, CategoryKind } from '@/lib/banking';
+import type { MemoryCluster, ReviewMemoryRow } from '@/lib/review-memory';
 const kinds = [
   { value: 'expense', label: 'Expense' },
   { value: 'income', label: 'Income' },
@@ -30,7 +31,44 @@ export default function CategoryManager({
     [name, setName] = useState(''),
     [kind, setKind] = useState<CategoryKind>('expense'),
     [saving, setSaving] = useState(false),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [view, setView] = useState<'categories' | 'memory'>('categories'),
+    [memory, setMemory] = useState<{ clusters: MemoryCluster[]; reviews: ReviewMemoryRow[] } | null>(null);
+  async function loadMemory() {
+    const response = await fetch('/api/review-memory');
+    const result = (await response.json()) as {
+      clusters?: MemoryCluster[];
+      reviews?: ReviewMemoryRow[];
+      error?: string;
+    };
+    if (!response.ok) throw new Error(result.error || 'Could not load categorization memory.');
+    setMemory({ clusters: result.clusters || [], reviews: result.reviews || [] });
+  }
+  async function toggleMemory(review: ReviewMemoryRow, enabled: boolean) {
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch('/api/category', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: review.transactionId,
+          category: review.categoryId,
+          action: enabled ? 'memory_enable' : 'memory_disable',
+          learn: enabled,
+          operationId: crypto.randomUUID(),
+          expectedRevision: review.revision,
+        }),
+      });
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(result.error || 'Could not update memory.');
+      await Promise.all([loadMemory(), onSaved()]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
   async function save(item: CategoryDefinition | undefined, archive?: boolean) {
     setSaving(true);
     setError('');
@@ -65,6 +103,7 @@ export default function CategoryManager({
           onOpenChange(v);
           setError('');
           setEditing(null);
+          if (!v) setView('categories');
         }
       }}
     >
@@ -77,6 +116,22 @@ export default function CategoryManager({
           </DialogDescription>
         </DialogHeader>
         <div className="category-scroll">
+          <div className="manager-tabs" role="tablist" aria-label="Category settings">
+            <button className={view === 'categories' ? 'active' : ''} onClick={() => setView('categories')}>
+              Categories
+            </button>
+            <button
+              className={view === 'memory' ? 'active' : ''}
+              onClick={() => {
+                setView('memory');
+                void loadMemory().catch((e) => setError(e.message));
+              }}
+            >
+              Categorization memory
+            </button>
+          </div>
+          {view === 'categories' ? (
+          <>
           <form
             className="category-form"
             onSubmit={(e) => {
@@ -179,6 +234,63 @@ export default function CategoryManager({
               </div>
             ))}
           </div>
+          </>
+          ) : (
+            <div className="memory-view">
+              <p className="import-note">
+                These are your latest explicit reviews. The AI may use enabled examples as context; this is reference-based personalization, not training or a guaranteed rule.
+              </p>
+              {!memory ? (
+                <p className="subtle">Loading categorization memory…</p>
+              ) : !memory.reviews.length ? (
+                <p className="small-empty">No reviewed transactions yet.</p>
+              ) : (
+                <>
+                  <div className="memory-summary">
+                    <strong>{memory.clusters.length} active patterns</strong>
+                    <span>{memory.reviews.filter((review) => review.memoryEnabled).length} enabled reviewed transactions</span>
+                  </div>
+                  {memory.clusters.map((cluster) => (
+                    <details className="memory-cluster" key={cluster.clusterId}>
+                      <summary>
+                        <span>{cluster.representativeDescription}{cluster.representativeSubDescription ? ` · ${cluster.representativeSubDescription}` : ''}</span>
+                        <span>{cluster.conflicting ? 'Conflicting alternatives' : cluster.alternatives[0]?.categoryName}</span>
+                      </summary>
+                      <p className="subtle">{cluster.accountType} · {cluster.currency} · {cluster.direction}</p>
+                      {cluster.alternatives.map((alternative) => (
+                        <div className="memory-alternative" key={alternative.memoryId}>
+                          <strong>{alternative.categoryName}</strong>
+                          <span>{alternative.reviewedTransactionCount} distinct {alternative.reviewedTransactionCount === 1 ? 'review' : 'reviews'}</span>
+                        </div>
+                      ))}
+                    </details>
+                  ))}
+                  <h3>Contributing transactions</h3>
+                  <div className="memory-transactions">
+                    {memory.reviews.map((review) => (
+                      <label key={review.transactionId} className="memory-transaction">
+                        <input
+                          type="checkbox"
+                          aria-label={`Use ${review.description} for future categorization`}
+                          checked={Boolean(review.memoryEnabled)}
+                          disabled={saving || review.categoryId === 'Uncategorized' || categories.find((category) => category.id === review.categoryId)?.archived}
+                          onChange={(event) => void toggleMemory(review, event.target.checked)}
+                        />
+                        <span>
+                          <strong>{review.description}</strong>
+                          <small>
+                            {review.subDescription ? `${review.subDescription} · ` : ''}
+                            {categories.find((category) => category.id === review.categoryId)?.name || review.categoryId}
+                            {review.origin === 'legacy_backfill' ? ' · migrated prior decision' : ''}
+                          </small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

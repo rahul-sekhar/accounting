@@ -1,0 +1,16 @@
+{
+  "description": "Synthetic human-labeled cases for comparing the same categorization model with and without review memory.",
+  "reviews": [
+    { "description": "CORNER CAFE", "subDescription": "CLIENT MEETING", "amountCents": -1850, "category": "Business expenses", "label": "counter-conventional exception" },
+    { "description": "AMAZON", "subDescription": "OFFICE CABLES", "amountCents": -3499, "category": "Business expenses" },
+    { "description": "AMAZON", "subDescription": "HOUSEHOLD", "amountCents": -4299, "category": "Shopping" },
+    { "description": "E-TRANSFER", "subDescription": "ALEX RENT", "amountCents": -90000, "category": "Housing" },
+    { "description": "AIRLINE REFUND", "subDescription": "TRIP RETURN", "amountCents": 21000, "category": "Travel" }
+  ],
+  "targets": [
+    { "description": "CORNER CAFE", "subDescription": "CLIENT MEETING", "expected": "Business expenses" },
+    { "description": "AMAZON", "subDescription": "", "expected": "low-confidence conflict" },
+    { "description": "E-TRANSFER", "subDescription": "ALEX RENT", "expected": "Housing" },
+    { "description": "AIRLINE REFUND", "subDescription": "TRIP RETURN", "expected": "Travel" }
+  ]
+}

@@ -54,6 +54,9 @@ import {
   type CsvData,
   type Mapping,
   type Category,
+  type Transaction,
+  type CategorizationEvidence,
+  needsReview,
 } from '@/lib/banking';
 const initial: AppData = {
   accounts: [],
@@ -140,6 +143,8 @@ export default function Dashboard() {
     [balanceError, setBalanceError] = useState('');
   const [aiConfirm, setAiConfirm] = useState(false);
   const [manageCategories, setManageCategories] = useState(false);
+  const [learnById, setLearnById] = useState<Record<string, boolean>>({});
+  const pendingReviewOperations = useRef(new Map<string, string>());
   const [mappingBusy, setMappingBusy] = useState(false),
     [mappingNote, setMappingNote] = useState('');
   const mappingRun = useRef(0);
@@ -195,6 +200,10 @@ export default function Dashboard() {
   }, []);
   useEffect(() => {
     refresh()
+      .then(async () => {
+        const result = await api<{ seeded: number }>('review-memory', 'POST', { limit: 50 });
+        if (result.seeded) await refresh();
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [refresh]);
@@ -220,19 +229,14 @@ export default function Dashboard() {
     (t) =>
       categoryFilter === 'all' ||
       (categoryFilter === 'review'
-        ? t.category === 'Uncategorized' ||
-          (t.source === 'ai' && t.confidence !== 'high')
+        ? needsReview(t)
         : t.category === categoryFilter),
   );
   const totals = summary(scoped, data.categories),
     hasBalances = accounts.some((a) => a.balance !== null),
     balance = accounts.reduce((n, a) => n + (a.balance || 0), 0);
   const uncategorized = data.transactions.filter((t) => t.source === 'none'),
-    reviewCount = scoped.filter(
-      (t) =>
-        t.category === 'Uncategorized' ||
-        (t.source === 'ai' && t.confidence !== 'high'),
-    ).length;
+    reviewCount = scoped.filter(needsReview).length;
   const spending = data.categories
     .filter((c) => ['expense', 'unclassified'].includes(c.kind))
     .map((definition) => ({
@@ -266,21 +270,63 @@ export default function Dashboard() {
     })
     .join(',');
   useEffect(() => setPage(0), [currency, accountFilter, month, categoryFilter]);
-  async function setCategory(id: string, category: Category) {
+  async function reviewTransaction(
+    transaction: Transaction,
+    category: Category,
+    action: 'correct' | 'confirm' | 'memory_enable' | 'memory_disable',
+    learn: boolean,
+  ) {
     setError('');
     setBusy('category');
+    const operationKey = `${transaction.id}:${category}:${action}:${learn}:${transaction.category_revision}`;
+    const operationId = pendingReviewOperations.current.get(operationKey) || crypto.randomUUID();
+    pendingReviewOperations.current.set(operationKey, operationId);
     try {
-      await api('category', 'PATCH', { id, category });
+      const saved = await api<{
+        category: string;
+        source?: string;
+        confidence?: string | null;
+        memoryEnabled: boolean;
+        categoryRevision: number;
+        reviewedAt: string | null;
+      }>('category', 'PATCH', {
+        id: transaction.id,
+        category,
+        action,
+        learn,
+        operationId,
+        expectedRevision: transaction.category_revision,
+      });
+      pendingReviewOperations.current.delete(operationKey);
       setData((d) => ({
         ...d,
         transactions: d.transactions.map((t) =>
-          t.id === id
-            ? { ...t, category, source: 'manual', confidence: null }
+          t.id === transaction.id
+            ? {
+                ...t,
+                category: saved.category,
+                source: saved.source ?? t.source,
+                confidence: saved.confidence === undefined ? t.confidence : saved.confidence,
+                category_revision: saved.categoryRevision,
+                reviewed_at: saved.reviewedAt,
+                memory_enabled: saved.memoryEnabled ? 1 : 0,
+                categorization_evidence:
+                  action === 'correct' || action === 'confirm'
+                    ? null
+                    : t.categorization_evidence,
+              }
             : t,
         ),
       }));
+      setLearnById((current) => ({ ...current, [transaction.id]: saved.memoryEnabled }));
+      setNotice(
+        saved.memoryEnabled
+          ? 'Reviewed · used for future categorization'
+          : 'Reviewed · this transaction only',
+      );
     } catch (e) {
       setError((e as Error).message);
+      if ((e as Error).message.includes('changed')) await refresh().catch(() => undefined);
     } finally {
       setBusy('');
     }
@@ -873,9 +919,15 @@ export default function Dashboard() {
                             value={t.category}
                             aria-label={`Category for ${t.description} on ${t.date}`}
                             disabled={!!busy}
-                            onChange={(e) =>
-                              setCategory(t.id, e.target.value as Category)
-                            }
+                            onChange={(e) => {
+                              const next = e.target.value as Category;
+                              void reviewTransaction(
+                                t,
+                                next,
+                                next === t.category ? 'confirm' : 'correct',
+                                learnById[t.id] ?? true,
+                              );
+                            }}
                           >
                             {data.categories
                               .filter((c) => !c.archived || c.id === t.category)
@@ -898,8 +950,68 @@ export default function Dashboard() {
                             </span>
                           )}
                           {t.source === 'manual' && (
-                            <span className="source-badge">Edited</span>
+                            <span className="source-badge">Reviewed</span>
                           )}
+                          <div className="review-controls">
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={learnById[t.id] ?? (t.reviewed_at ? Boolean(t.memory_enabled) : true)}
+                                disabled={!!busy}
+                                onChange={(event) => {
+                                  const learn = event.target.checked;
+                                  if (t.reviewed_at)
+                                    void reviewTransaction(
+                                      t,
+                                      t.category,
+                                      learn ? 'memory_enable' : 'memory_disable',
+                                      learn,
+                                    );
+                                  else
+                                    setLearnById((current) => ({ ...current, [t.id]: learn }));
+                                }}
+                              />
+                              Use for future categorization
+                            </label>
+                            {!t.reviewed_at && (
+                              <button
+                                className="text-button accept-category"
+                                disabled={!!busy}
+                                onClick={() =>
+                                  void reviewTransaction(
+                                    t,
+                                    t.category,
+                                    'confirm',
+                                    learnById[t.id] ?? true,
+                                  )
+                                }
+                              >
+                                Accept category
+                              </button>
+                            )}
+                            {t.reviewed_at && (
+                              <span className="reviewed-label">
+                                Reviewed · {t.memory_enabled ? 'used for future categorization' : 'this transaction only'}
+                              </span>
+                            )}
+                          </div>
+                          {t.source === 'ai' && t.categorization_evidence && (() => {
+                            let evidence: CategorizationEvidence[] = [];
+                            try {
+                              evidence = JSON.parse(t.categorization_evidence);
+                            } catch {}
+                            return evidence.length ? (
+                              <details className="ai-evidence">
+                                <summary>AI cited your previous reviews</summary>
+                                {evidence.map((item) => (
+                                  <p key={item.memoryId}>
+                                    {item.description}{item.subDescription ? ` · ${item.subDescription}` : ''} → {item.categoryName}
+                                    {item.reviewedTransactionCount > 1 ? ` (${item.reviewedTransactionCount} reviews)` : ''}
+                                  </p>
+                                ))}
+                              </details>
+                            ) : null;
+                          })()}
                         </div>
                       </TableCell>
                       <TableCell

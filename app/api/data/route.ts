@@ -15,7 +15,7 @@ export async function GET() {
         .bind(user.userId),
       db
         .prepare(
-          'SELECT id,account_id,date,description,sub_description,amount,category,source,confidence FROM transactions WHERE user_id=? ORDER BY date DESC,id',
+          'SELECT t.id,t.account_id,t.date,t.description,t.sub_description,t.amount,t.category,t.source,t.confidence,t.category_revision,t.categorization_evidence,r.reviewed_at,r.memory_enabled FROM transactions t LEFT JOIN transaction_reviews r ON r.user_id=t.user_id AND r.transaction_id=t.id WHERE t.user_id=? ORDER BY t.date DESC,t.id',
         )
         .bind(user.userId),
       db

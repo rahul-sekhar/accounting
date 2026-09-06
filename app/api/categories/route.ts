@@ -36,12 +36,19 @@ async function save(request: Request, creating: boolean) {
       );
     if (creating && current.length >= 100)
       throw new AppError('You can manage up to 100 categories.');
-    await getDb()
-      .prepare(
-        'INSERT INTO category_definitions (user_id,id,name,kind,archived) VALUES (?,?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,kind=excluded.kind,archived=excluded.archived',
-      )
-      .bind(u.userId, id, name, b.kind, b.archived ? 1 : 0)
-      .run();
+    const db = getDb();
+    await db.batch([
+      db
+        .prepare(
+          'INSERT INTO category_definitions (user_id,id,name,kind,archived) VALUES (?,?,?,?,?) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,kind=excluded.kind,archived=excluded.archived',
+        )
+        .bind(u.userId, id, name, b.kind, b.archived ? 1 : 0),
+      db
+        .prepare(
+          'INSERT INTO categorization_contexts (user_id,revision) VALUES (?,1) ON CONFLICT(user_id) DO UPDATE SET revision=revision+1',
+        )
+        .bind(u.userId),
+    ]);
     return json({ categories: await getCategories(u.userId) });
   } catch (e) {
     return failure(e);

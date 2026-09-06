@@ -64,14 +64,62 @@ assert.equal(all.status, 200);
 const rows = all.data.transactions.filter((t) => t.account_id === accountId);
 assert.equal(rows.length, 3);
 assert.equal(rows.filter((t) => t.description === 'QA BUS').length, 2);
-const changed = await req('category', 'PATCH', {
+const reviewOperationId = crypto.randomUUID();
+const reviewPayload = {
   id: rows[0].id,
   category: 'Transfers',
-});
+  action: 'correct',
+  learn: true,
+  operationId: reviewOperationId,
+  expectedRevision: rows[0].category_revision,
+};
+const changed = await req('category', 'PATCH', reviewPayload);
 assert.equal(changed.status, 200);
+const replay = await req('category', 'PATCH', reviewPayload);
+assert.equal(replay.status, 200);
+assert.equal(replay.data.replayed, true);
 assert.equal(
-  (await req('category', 'PATCH', { id: rows[0].id, category: 'Invalid' }))
-    .status,
+  (
+    await req('category', 'PATCH', {
+      ...reviewPayload,
+      category: 'Income',
+    })
+  ).status,
+  409,
+);
+assert.equal(
+  (
+    await req('category', 'PATCH', {
+      ...reviewPayload,
+      operationId: crypto.randomUUID(),
+    })
+  ).status,
+  409,
+);
+const memoryOff = await req('category', 'PATCH', {
+  id: rows[0].id,
+  category: 'Transfers',
+  action: 'memory_disable',
+  learn: false,
+  operationId: crypto.randomUUID(),
+  expectedRevision: changed.data.categoryRevision,
+});
+assert.equal(memoryOff.status, 200);
+const memoryState = await req('review-memory');
+assert.equal(memoryState.status, 200);
+assert.equal(
+  memoryState.data.reviews.find((review) => review.transactionId === rows[0].id)
+    .memoryEnabled,
+  0,
+);
+assert.equal(
+  (await req('category', 'PATCH', {
+    id: rows[0].id,
+    category: 'Invalid',
+    action: 'correct',
+    operationId: crypto.randomUUID(),
+    expectedRevision: memoryOff.data.categoryRevision,
+  })).status,
   400,
 );
 assert.equal(
@@ -79,6 +127,9 @@ assert.equal(
     await req('category', 'PATCH', {
       id: 'someone-elses-id',
       category: 'Income',
+      action: 'correct',
+      operationId: crypto.randomUUID(),
+      expectedRevision: 0,
     })
   ).status,
   404,
