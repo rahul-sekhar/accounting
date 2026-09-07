@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, CheckCircle2, FileSpreadsheet, LoaderCircle } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -45,7 +45,7 @@ async function readPage(importId: string, cursor?: string) {
   return result;
 }
 
-export default function ImportResults({ importId }: { importId: string }) {
+export default function ImportResults({ importId, children }: { importId: string; children?: ReactNode }) {
   const [report, setReport] = useState<Report | null>(null);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -111,7 +111,7 @@ export default function ImportResults({ importId }: { importId: string }) {
                 <h2>Matching rows and actions</h2>
                 <p className="subtle">Matched includes rows enriched with a missing sub-description.</p>
               </div>
-              <Link className="secondary-link" href={`/?view=transactions&importId=${encodeURIComponent(report.id)}`}>
+              <Link className="secondary-link" href={`/?view=transactions&currency=${encodeURIComponent(report.currency)}&account=${encodeURIComponent(report.account_id)}&importGroup=${encodeURIComponent(report.id)}`}>
                 View imported transactions
               </Link>
             </div>
@@ -146,6 +146,7 @@ export default function ImportResults({ importId }: { importId: string }) {
               </>
             )}
           </section>
+          {children}
         </>
       ) : null}
     </main>
