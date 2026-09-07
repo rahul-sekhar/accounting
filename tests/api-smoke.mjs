@@ -100,6 +100,37 @@ assert.equal(all.status, 200);
 const rows = all.data.transactions.filter((t) => t.account_id === accountId);
 assert.equal(rows.length, 3);
 assert.equal(rows.filter((t) => t.description === 'QA BUS').length, 2);
+const reversePayload = {
+  csv: 'Date,Description,Amount\n2026-08-10,QA CARD PURCHASE,12.34\n2026-08-11,QA CARD REFUND,-3.00',
+  filename: 'qa-direction.csv',
+  mapping: { ...mapping, sign: 'reverse' },
+  account: {
+    bank: 'Direction Test Institution',
+    name: 'QA direction account',
+    type: 'Credit card',
+    currency: 'CAD',
+  },
+};
+const reversed = await req('import', 'POST', reversePayload);
+assert.equal(reversed.status, 200, JSON.stringify(reversed));
+assert.equal(reversed.data.added, 2);
+all = await req('data');
+const reversedRows = all.data.transactions.filter(
+  (transaction) => transaction.account_id === reversed.data.accountId,
+);
+assert.deepEqual(
+  reversedRows
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((transaction) => transaction.amount),
+  [-1234, 300],
+);
+const reversedAgain = await req('import', 'POST', {
+  ...reversePayload,
+  accountId: reversed.data.accountId,
+});
+assert.equal(reversedAgain.status, 200, JSON.stringify(reversedAgain));
+assert.equal(reversedAgain.data.added, 0);
+assert.equal(reversedAgain.data.skipped, 2);
 const renamed = await req('account', 'PATCH', {
   id: accountId,
   action: 'update',
@@ -262,10 +293,22 @@ assert.equal(
 );
 if (!all.data.aiReady)
   assert.equal(
+    (
+      await req('map-csv', 'POST', {
+        headers: ['Date', 'Description', 'Amount'],
+        rows: [['2026-08-01', 'QA PURCHASE', '12.34']],
+        bank: 'QA institution',
+        accountType: 'Credit card',
+      })
+    ).status,
+    503,
+  );
+if (!all.data.aiReady)
+  assert.equal(
     (await req('categorize', 'POST', { ids: [rows[1].id] })).status,
     503,
   );
 console.log(
-  'PASS: sign-in, generic account lifecycle, CSV import, repeat import, legitimate duplicates, protected history, rejected invalid rows and currency, unauthenticated and cross-origin requests.',
+  'PASS: sign-in, generic account lifecycle, normal/reverse CSV import, repeat import, legitimate duplicates, protected history, rejected invalid rows and currency, unavailable-AI fallback, unauthenticated and cross-origin requests.',
 );
 console.log('QA account ID: ' + accountId);

@@ -644,6 +644,13 @@ table td {
   font-variant-numeric: tabular-nums;
   font-weight: 500;
 }
+.amount-direction {
+  display: block;
+  margin-top: 3px;
+  color: #617187;
+  font-size: 12px;
+  font-weight: 400;
+}
 .date-cell {
   font-size: 13px;
   color: #617187;

@@ -346,6 +346,9 @@ export function mapTransactions(
       return;
     }
     amount *= m.sign === 'reverse' ? -1 : 1;
+    // Multiplying zero by -1 produces -0 in JavaScript. Keep stored and
+    // previewed zero amounts canonical regardless of the selected direction.
+    if (amount === 0) amount = 0;
     const key = JSON.stringify([
       date,
       description.toLowerCase().replace(/\s+/g, ' '),

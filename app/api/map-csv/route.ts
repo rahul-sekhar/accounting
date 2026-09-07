@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { identity, body, json, failure, AppError } from '@/lib/server';
 import { mapTransactions, type Mapping } from '@/lib/banking';
+import { assessDirectionEvidence } from '@/lib/import-mapping';
 export async function POST(request: Request) {
   try {
     await identity(request);
@@ -173,6 +174,14 @@ export async function POST(request: Request) {
       result.note =
         'The sample dates could use either month/day or day/month. Confirm the date format before saving. ' +
         result.note;
+    }
+    const directionEvidence = assessDirectionEvidence(
+      { headers: b.headers, rows: b.rows },
+      m,
+    );
+    if (directionEvidence.uncertain) {
+      result.confidence = 'low';
+      result.note = `${directionEvidence.note} ${result.note}`.trim();
     }
     return json({ ...result, note: result.note.slice(0, 600) });
   } catch (e) {

@@ -73,6 +73,10 @@ import {
   type CategorizationEvidence,
   needsReview,
 } from '@/lib/banking';
+import {
+  MappingSuggestionGate,
+  selectRepresentativeRows,
+} from '@/lib/import-mapping';
 const initial: AppData = {
   accounts: [],
   transactions: [],
@@ -85,11 +89,13 @@ async function api<T = Record<string, unknown>>(
   path: string,
   method = 'GET',
   payload?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const r = await fetch(`/api/${path}`, {
     method,
     headers: payload ? { 'Content-Type': 'application/json' } : undefined,
     ...(payload ? { body: JSON.stringify(payload) } : {}),
+    signal,
   });
   let result;
   try {
@@ -154,16 +160,43 @@ export default function Dashboard() {
   const pendingReviewOperations = useRef(new Map<string, string>());
   const [mappingBusy, setMappingBusy] = useState(false),
     [mappingNote, setMappingNote] = useState('');
-  const mappingRun = useRef(0);
+  const mappingGate = useRef(new MappingSuggestionGate());
+  const mappingAbort = useRef<AbortController | null>(null);
   const categoryLabel = (id: string) =>
     data.categories.find((c) => c.id === id)?.name || id;
   function changeMapping(value: Mapping) {
-    mappingRun.current++;
+    mappingGate.current.invalidate();
+    mappingAbort.current?.abort();
+    mappingAbort.current = null;
     setMappingBusy(false);
     setMappingNote(
       'Mapping edited manually. Review the preview before saving.',
     );
     setMapping(value);
+  }
+  function invalidateMappingSuggestion(note = '') {
+    mappingGate.current.invalidate();
+    mappingAbort.current?.abort();
+    mappingAbort.current = null;
+    setMappingBusy(false);
+    if (note) setMappingNote(note);
+  }
+  function changeImportTarget(value: string) {
+    invalidateMappingSuggestion(
+      csv
+        ? 'Account context changed. Review the mapping or ask AI to check it again.'
+        : '',
+    );
+    setTarget(value);
+  }
+  function changeAccountDraft(value: AccountDraft) {
+    if (value.bank !== accountDraft.bank || value.type !== accountDraft.type)
+      invalidateMappingSuggestion(
+        csv
+          ? 'Institution or account type changed. Review the mapping or ask AI to check it again.'
+          : '',
+      );
+    setAccountDraft(value);
   }
   async function aiMapping(parsed: CsvData, run: number) {
     if (!data.aiReady) {
@@ -174,30 +207,43 @@ export default function Dashboard() {
     }
     setMappingBusy(true);
     setMappingNote('AI is checking the columns and sample rows…');
+    mappingAbort.current?.abort();
+    const controller = new AbortController();
+    mappingAbort.current = controller;
     const selected = data.accounts.find((a) => a.id === target);
     try {
       const result = await api<{
         mapping: Mapping;
         confidence: string;
         note: string;
-      }>('map-csv', 'POST', {
-        headers: parsed.headers,
-        rows: parsed.rows.slice(0, 5).map((r) => r.map((c) => c.slice(0, 500))),
-        bank: selected?.bank || accountDraft.bank,
-        accountType: selected?.type || accountDraft.type,
-      });
-      if (mappingRun.current !== run) return;
+      }>(
+        'map-csv',
+        'POST',
+        {
+          headers: parsed.headers,
+          rows: selectRepresentativeRows(parsed).map((r) =>
+            r.map((c) => c.slice(0, 500)),
+          ),
+          bank: selected?.bank || accountDraft.bank,
+          accountType: selected?.type || accountDraft.type,
+        },
+        controller.signal,
+      );
+      if (!mappingGate.current.accepts(run)) return;
       setMapping(result.mapping);
       setMappingNote(
         `AI suggestion · ${result.confidence} confidence. ${result.note} Review before saving.`,
       );
     } catch (e) {
-      if (mappingRun.current === run)
+      if (mappingGate.current.accepts(run) && !controller.signal.aborted)
         setMappingNote(
           `${(e as Error).message} Your current mapping is preserved.`,
         );
     } finally {
-      if (mappingRun.current === run) setMappingBusy(false);
+      if (mappingGate.current.accepts(run)) {
+        setMappingBusy(false);
+        mappingAbort.current = null;
+      }
     }
   }
   const refresh = useCallback(async () => {
@@ -392,8 +438,8 @@ export default function Dashboard() {
   }, []);
   async function loadFile(file?: File) {
     if (busy) return;
-    const run = ++mappingRun.current;
-    setMappingBusy(false);
+    invalidateMappingSuggestion();
+    const run = mappingGate.current.begin();
     setMappingNote('');
     setImportError('');
     setCsv(null);
@@ -409,7 +455,7 @@ export default function Dashboard() {
     }
     try {
       const text = await file.text();
-      if (mappingRun.current !== run) return;
+      if (!mappingGate.current.accepts(run)) return;
       const parsed = parseCsv(text);
       setRaw(text);
       setFilename(file.name);
@@ -421,8 +467,7 @@ export default function Dashboard() {
     }
   }
   function startImport(account?: Account) {
-    mappingRun.current++;
-    setMappingBusy(false);
+    invalidateMappingSuggestion();
     setMappingNote('');
     setImportError('');
     setTarget(account?.id || 'new');
@@ -1035,8 +1080,7 @@ export default function Dashboard() {
           if (busy !== 'import') {
             setShowImport(v);
             if (!v) {
-              mappingRun.current++;
-              setMappingBusy(false);
+              invalidateMappingSuggestion();
             }
           }
         }}
@@ -1055,7 +1099,7 @@ export default function Dashboard() {
             <Picker
               label="Import into"
               value={target}
-              onChange={setTarget}
+              onChange={changeImportTarget}
               options={[
                 { value: 'new', label: 'Create a new account' },
                 ...data.accounts
@@ -1067,14 +1111,18 @@ export default function Dashboard() {
               ]}
             />
             {target === 'new' && (
-              <AccountFields value={accountDraft} onChange={setAccountDraft} />
+              <AccountFields
+                value={accountDraft}
+                onChange={changeAccountDraft}
+              />
             )}
             <label className="upload-zone">
               <FileSpreadsheet size={28} />
               <strong>{filename || 'Choose a CSV export'}</strong>
               <span>CSV from any institution · up to 2,000 rows · 5 MB</span>
               <span>
-                AI uses headers and up to five sample rows to suggest a mapping.
+                AI uses headers and up to five representative sample rows to
+                suggest a mapping.
               </span>
               <input
                 type="file"
@@ -1090,7 +1138,9 @@ export default function Dashboard() {
                   <button
                     className="text-button"
                     disabled={mappingBusy || !data.aiReady}
-                    onClick={() => void aiMapping(csv, ++mappingRun.current)}
+                    onClick={() =>
+                      void aiMapping(csv, mappingGate.current.begin())
+                    }
                   >
                     <Sparkles size={14} />
                     {mappingBusy ? 'Mapping…' : 'Suggest with AI'}
@@ -1244,6 +1294,13 @@ export default function Dashboard() {
                               : data.accounts.find((a) => a.id === target)
                                   ?.currency,
                           )}
+                          <span className="amount-direction">
+                            {t.amount < 0
+                              ? 'Money out'
+                              : t.amount > 0
+                                ? 'Money in'
+                                : 'Zero'}
+                          </span>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1267,8 +1324,7 @@ export default function Dashboard() {
             <button
               className="secondary"
               onClick={() => {
-                mappingRun.current++;
-                setMappingBusy(false);
+                invalidateMappingSuggestion();
                 setShowImport(false);
               }}
               disabled={!!busy}
