@@ -68,6 +68,7 @@ export type Transaction = {
   confidence: string | null;
   category_revision: number;
   reviewed_at: string | null;
+  has_review: boolean;
   memory_enabled: number | null;
   categorization_evidence: string | null;
 };
@@ -120,11 +121,11 @@ export type ParsedTransaction = {
 export function needsReview(
   transaction: Pick<
     Transaction,
-    'category' | 'source' | 'confidence' | 'reviewed_at'
+    'category' | 'source' | 'confidence' | 'has_review'
   >,
 ) {
   if (transaction.category === 'Uncategorized') return true;
-  if (transaction.reviewed_at) return false;
+  if (transaction.has_review) return false;
   return transaction.source === 'ai' && transaction.confidence !== 'high';
 }
 export function parseCsv(text: string): CsvData {

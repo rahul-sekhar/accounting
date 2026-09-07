@@ -3,6 +3,7 @@ export class AppError extends Error {
   constructor(
     message: string,
     public status = 400,
+    public code?: string,
   ) {
     super(message);
   }
@@ -60,7 +61,10 @@ export function json(value: unknown, status = 200) {
 }
 export function failure(error: unknown) {
   if (error instanceof AppError)
-    return json({ error: error.message }, error.status);
+    return json(
+      { error: error.message, ...(error.code ? { code: error.code } : {}) },
+      error.status,
+    );
   return json(
     { error: 'The request could not be completed. Please try again.' },
     500,

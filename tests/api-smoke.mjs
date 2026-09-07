@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { globSync } from 'node:fs';
 const base = process.env.BASE_URL || 'http://localhost:3000';
 const sign = await fetch(base + '/signin-with-chatgpt?return_to=%2F', {
   redirect: 'manual',
@@ -98,7 +100,8 @@ assert.equal(recovered.status, 200, JSON.stringify(recovered));
 assert.equal(recovered.data.importId, first.data.importId);
 assert.equal(recovered.data.replayed, true);
 assert.equal(
-  (await req('import', 'POST', { ...payload, filename: 'conflict.csv' })).status,
+  (await req('import', 'POST', { ...payload, filename: 'conflict.csv' }))
+    .status,
   409,
 );
 const second = await req('import', 'POST', {
@@ -109,7 +112,9 @@ const second = await req('import', 'POST', {
 assert.equal(second.data.added, 0);
 assert.equal(second.data.skipped, 3);
 assert.equal(second.data.enriched, 0);
-const importDetails = await req(`imports/${second.data.importId}?outcome=duplicate&limit=2`);
+const importDetails = await req(
+  `imports/${second.data.importId}?outcome=duplicate&limit=2`,
+);
 assert.equal(importDetails.status, 200, JSON.stringify(importDetails));
 assert.equal(importDetails.data.detailsAvailable, true);
 assert.equal(importDetails.data.outcomes.length, 2);
@@ -129,8 +134,14 @@ const overlapPayload = {
   filename: 'qa-concurrent.csv',
 };
 const overlapping = await Promise.all([
-  req('import', 'POST', { ...overlapPayload, operationId: crypto.randomUUID() }),
-  req('import', 'POST', { ...overlapPayload, operationId: crypto.randomUUID() }),
+  req('import', 'POST', {
+    ...overlapPayload,
+    operationId: crypto.randomUUID(),
+  }),
+  req('import', 'POST', {
+    ...overlapPayload,
+    operationId: crypto.randomUUID(),
+  }),
 ]);
 assert.deepEqual(
   overlapping.map((result) => result.status),
@@ -186,8 +197,9 @@ assert.equal(reversedAgain.data.added, 0);
 assert.equal(reversedAgain.data.skipped, 2);
 const boundaryCsv = [
   'Date,Description,Amount',
-  ...Array.from({ length: 2000 }, (_, index) =>
-    `2026-07-01,QA BOUNDARY ${index + 1},-${index + 1}.00`,
+  ...Array.from(
+    { length: 2000 },
+    (_, index) => `2026-07-01,QA BOUNDARY ${index + 1},-${index + 1}.00`,
   ),
 ].join('\n');
 const boundary = await req('import', 'POST', {
@@ -245,7 +257,13 @@ assert.equal(
   200,
 );
 assert.equal(
-  (await req('import', 'POST', { ...payload, operationId: crypto.randomUUID(), accountId })).status,
+  (
+    await req('import', 'POST', {
+      ...payload,
+      operationId: crypto.randomUUID(),
+      accountId,
+    })
+  ).status,
   409,
 );
 assert.equal(
@@ -317,7 +335,9 @@ const skippedOverwrite = await req('import', 'POST', {
   ...payload,
   operationId: crypto.randomUUID(),
   accountId,
-  csv: enrichmentCsv.replaceAll('Route 4', 'Replacement').replaceAll('Route 7', 'Replacement 2'),
+  csv: enrichmentCsv
+    .replaceAll('Route 4', 'Replacement')
+    .replaceAll('Route 7', 'Replacement 2'),
   filename: 'qa-no-overwrite.csv',
   mapping: enrichmentMapping,
 });
@@ -379,6 +399,10 @@ assert.equal(
   'manual',
 );
 assert.equal(
+  all.data.transactions.find((t) => t.id === rows[0].id).has_review,
+  true,
+);
+assert.equal(
   ['Route 4', 'Route 7', 'September payroll'].includes(
     all.data.transactions.find((t) => t.id === rows[0].id).sub_description,
   ),
@@ -411,8 +435,13 @@ assert.equal(
   400,
 );
 assert.equal(
-  (await req('import', 'POST', { ...payload, operationId: crypto.randomUUID(), accountId: 'someone-elses-id' }))
-    .status,
+  (
+    await req('import', 'POST', {
+      ...payload,
+      operationId: crypto.randomUUID(),
+      accountId: 'someone-elses-id',
+    })
+  ).status,
   404,
 );
 if (!all.data.aiReady)
@@ -427,12 +456,274 @@ if (!all.data.aiReady)
     ).status,
     503,
   );
+
+const protectedCategorizeOperation = crypto.randomUUID();
+const protectedCategorizePayload = {
+  operationId: protectedCategorizeOperation,
+  ids: [rows[0].id, 'missing-categorize-id'],
+};
+const protectedCategorize = await req(
+  'categorize',
+  'POST',
+  protectedCategorizePayload,
+);
+assert.equal(
+  protectedCategorize.status,
+  200,
+  JSON.stringify(protectedCategorize),
+);
+assert.equal(protectedCategorize.data.categorized, 0);
+assert.deepEqual(protectedCategorize.data.protectedIds, [rows[0].id]);
+assert.deepEqual(protectedCategorize.data.unavailableIds, [
+  'missing-categorize-id',
+]);
+const protectedCategorizeReplay = await req(
+  'categorize',
+  'POST',
+  protectedCategorizePayload,
+);
+assert.equal(protectedCategorizeReplay.status, 200);
+assert.equal(protectedCategorizeReplay.data.replayed, true);
+assert.equal(
+  (
+    await req('categorize', 'POST', {
+      operationId: protectedCategorizeOperation,
+      ids: [rows[0].id],
+    })
+  ).status,
+  409,
+);
 if (!all.data.aiReady)
   assert.equal(
-    (await req('categorize', 'POST', { ids: [rows[1].id] })).status,
+    (
+      await req('categorize', 'POST', {
+        operationId: crypto.randomUUID(),
+        ids: [rows[1].id],
+      })
+    ).status,
     503,
   );
+
+const deleteFixture = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  accountId,
+  csv: 'Date,Description,Amount\n2026-08-21,QA DELETE REIMPORT,-17.49',
+  filename: 'qa-delete.csv',
+});
+assert.equal(deleteFixture.status, 200, JSON.stringify(deleteFixture));
+all = await req('data');
+const deleteTarget = all.data.transactions.find(
+  (transaction) =>
+    transaction.account_id === accountId &&
+    transaction.description === 'QA DELETE REIMPORT',
+);
+const deleteReviewOperation = crypto.randomUUID();
+const deleteReviewPayload = {
+  id: deleteTarget.id,
+  category: 'Other',
+  action: 'correct',
+  learn: true,
+  operationId: deleteReviewOperation,
+  expectedRevision: deleteTarget.category_revision,
+};
+assert.equal((await req('category', 'PATCH', deleteReviewPayload)).status, 200);
+assert.equal(
+  (
+    await req('transactions/delete', 'POST', {
+      operationId: crypto.randomUUID(),
+      ids: [],
+    })
+  ).status,
+  400,
+);
+assert.equal(
+  (
+    await req('transactions/delete', 'POST', {
+      operationId: crypto.randomUUID(),
+      ids: Array.from({ length: 51 }, (_, index) => `missing-${index}`),
+    })
+  ).status,
+  400,
+);
+const deleteOperationId = crypto.randomUUID();
+const localDatabase = globSync(
+  '.wrangler/state/v3/d1/miniflare-D1DatabaseObject/*.sqlite',
+).find((path) => !path.endsWith('/metadata.sqlite'));
+assert.ok(localDatabase, 'Expected the disposable local D1 database.');
+const currentUserId = execFileSync(
+  'sqlite3',
+  [localDatabase, `SELECT user_id FROM accounts WHERE id='${accountId}';`],
+  { encoding: 'utf8' },
+).trim();
+const foreignAccountId = crypto.randomUUID();
+const foreignTransactionId = crypto.randomUUID();
+execFileSync('sqlite3', [localDatabase], {
+  input: `PRAGMA foreign_keys=ON;
+    INSERT INTO accounts (id,user_id,bank,name,type,currency,archived,created_at)
+      VALUES ('${foreignAccountId}','other-test-user','Other institution','Foreign fixture','Chequing','CAD',0,'2026-08-21T00:00:00Z');
+    INSERT INTO transactions (id,user_id,account_id,date,description,sub_description,amount,fingerprint,import_id,category,source,confidence,category_revision,categorization_evidence,created_at)
+      VALUES ('${foreignTransactionId}','other-test-user','${foreignAccountId}','2026-08-21','FOREIGN DELETE FIXTURE','',-100,'foreign-delete-fingerprint','foreign-import','Uncategorized','none',NULL,0,NULL,'2026-08-21T00:00:00Z');`,
+});
+execFileSync('sqlite3', [localDatabase], {
+  input: `UPDATE transaction_reviews SET reviewed_at=NULL
+    WHERE user_id='${currentUserId}' AND transaction_id='${deleteTarget.id}';`,
+});
+const migratedReviewProjection = await req('data');
+const migratedReviewedTransaction =
+  migratedReviewProjection.data.transactions.find(
+    (transaction) => transaction.id === deleteTarget.id,
+  );
+assert.equal(migratedReviewedTransaction.reviewed_at, null);
+assert.equal(migratedReviewedTransaction.has_review, true);
+const isolatedCategorize = await req('categorize', 'POST', {
+  operationId: crypto.randomUUID(),
+  ids: [deleteTarget.id, foreignTransactionId],
+});
+assert.equal(
+  isolatedCategorize.status,
+  200,
+  JSON.stringify(isolatedCategorize),
+);
+assert.deepEqual(isolatedCategorize.data.protectedIds, [deleteTarget.id]);
+assert.deepEqual(isolatedCategorize.data.unavailableIds, [
+  foreignTransactionId,
+]);
+assert.equal(
+  execFileSync(
+    'sqlite3',
+    [
+      localDatabase,
+      `SELECT source FROM transactions WHERE id='${foreignTransactionId}' AND user_id='other-test-user';`,
+    ],
+    { encoding: 'utf8' },
+  ).trim(),
+  'none',
+);
+const contextBeforeDelete = Number(
+  execFileSync(
+    'sqlite3',
+    [
+      localDatabase,
+      `SELECT revision FROM categorization_contexts WHERE user_id='${currentUserId}';`,
+    ],
+    { encoding: 'utf8' },
+  ).trim(),
+);
+const deletePayload = {
+  operationId: deleteOperationId,
+  ids: [deleteTarget.id, foreignTransactionId],
+};
+const deleted = await req('transactions/delete', 'POST', deletePayload);
+assert.equal(deleted.status, 200, JSON.stringify(deleted));
+assert.deepEqual(deleted.data.deletedIds, [deleteTarget.id]);
+assert.deepEqual(deleted.data.unavailableIds, [foreignTransactionId]);
+assert.equal(
+  execFileSync(
+    'sqlite3',
+    [
+      localDatabase,
+      `SELECT COUNT(*) FROM transactions WHERE id='${foreignTransactionId}' AND user_id='other-test-user';`,
+    ],
+    { encoding: 'utf8' },
+  ).trim(),
+  '1',
+);
+assert.equal(
+  Number(
+    execFileSync(
+      'sqlite3',
+      [
+        localDatabase,
+        `SELECT revision FROM categorization_contexts WHERE user_id='${currentUserId}';`,
+      ],
+      { encoding: 'utf8' },
+    ).trim(),
+  ),
+  contextBeforeDelete + 1,
+);
+const deleteReplay = await req('transactions/delete', 'POST', deletePayload);
+assert.equal(deleteReplay.status, 200, JSON.stringify(deleteReplay));
+assert.equal(deleteReplay.data.replayed, true);
+assert.equal(
+  Number(
+    execFileSync(
+      'sqlite3',
+      [
+        localDatabase,
+        `SELECT revision FROM categorization_contexts WHERE user_id='${currentUserId}';`,
+      ],
+      { encoding: 'utf8' },
+    ).trim(),
+  ),
+  contextBeforeDelete + 1,
+);
+assert.equal(
+  (
+    await req('transactions/delete', 'POST', {
+      operationId: deleteOperationId,
+      ids: ['different-id'],
+    })
+  ).status,
+  409,
+);
+assert.equal((await req('category', 'PATCH', deleteReviewPayload)).status, 404);
+assert.equal(
+  execFileSync(
+    'sqlite3',
+    [
+      localDatabase,
+      `SELECT COUNT(*) FROM transaction_review_events WHERE user_id='${currentUserId}' AND operation_id='${deleteReviewOperation}';`,
+    ],
+    { encoding: 'utf8' },
+  ).trim(),
+  '1',
+);
+assert.equal(
+  execFileSync(
+    'sqlite3',
+    [
+      localDatabase,
+      `SELECT COUNT(*) FROM transaction_reviews WHERE user_id='${currentUserId}' AND transaction_id='${deleteTarget.id}';`,
+    ],
+    { encoding: 'utf8' },
+  ).trim(),
+  '0',
+);
+const afterDeleteMemory = await req('review-memory');
+assert.equal(
+  afterDeleteMemory.data.reviews.some(
+    (review) => review.transactionId === deleteTarget.id,
+  ),
+  false,
+);
+const retainedDeleteOutcome = await req(
+  `imports/${deleteFixture.data.importId}?outcome=added`,
+);
+assert.equal(
+  retainedDeleteOutcome.data.outcomes[0].current_transaction_id,
+  null,
+);
+const reimportedDelete = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  accountId,
+  csv: 'Date,Description,Amount\n2026-08-21,QA DELETE REIMPORT,-17.49',
+  filename: 'qa-delete-reimport.csv',
+});
+assert.equal(reimportedDelete.data.added, 1);
+all = await req('data');
+const replacement = all.data.transactions.find(
+  (transaction) =>
+    transaction.account_id === accountId &&
+    transaction.description === 'QA DELETE REIMPORT',
+);
+assert.notEqual(replacement.id, deleteTarget.id);
+assert.equal(replacement.source, 'none');
+execFileSync('sqlite3', [localDatabase], {
+  input: `PRAGMA foreign_keys=ON; DELETE FROM accounts WHERE id='${foreignAccountId}' AND user_id='other-test-user';`,
+});
 console.log(
-  'PASS: sign-in, generic account lifecycle, normal/reverse CSV import, repeat import, legitimate duplicates, protected history, rejected invalid rows and currency, unavailable-AI fallback, unauthenticated and cross-origin requests.',
+  'PASS: sign-in, account lifecycle, imports and retained outcomes, safe receipt-backed deletion and re-import, review replay protection, unavailable-AI fallback, unauthenticated and cross-origin requests.',
 );
 console.log('QA account ID: ' + accountId);

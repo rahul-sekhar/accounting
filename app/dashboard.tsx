@@ -2,6 +2,15 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
+  beginCategorizeProgress,
+  categorizeBatches,
+  categorizeRequestKey,
+  commitCategorizeBatch,
+  haltCategorizeProgress,
+  isCategorizationEligible,
+  type CategorizeProgress,
+} from '@/lib/transaction-categorization';
+import {
   WalletCards,
   Upload,
   ShieldCheck,
@@ -17,6 +26,7 @@ import {
   LockKeyhole,
   MoreHorizontal,
 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +42,9 @@ import AccountManager, {
 } from './account-manager';
 import ImportHistory from './import-history';
 import ImportResults from './import-results';
+import TransactionSelectionToolbar, {
+  type DeleteOperationView,
+} from './transaction-selection-toolbar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -87,6 +100,17 @@ import {
   type FilterErrors,
   type TransactionFilters,
 } from '@/lib/transaction-filters';
+import {
+  beginDeleteProgress,
+  captureMatchingTransactions,
+  commitDeleteBatch,
+  deleteBatches,
+  haltDeleteProgress,
+  intersectTransactionSelection,
+  pageSelectionState,
+  toggleTransaction,
+  toggleTransactionPage,
+} from '@/lib/transaction-selection';
 const initial: AppData = {
   accounts: [],
   transactions: [],
@@ -113,11 +137,15 @@ async function api<T = Record<string, unknown>>(
   } catch {
     throw new Error('Could not reach your workspace. Please reload.');
   }
-  if (!r.ok)
-    throw new Error(
+  if (!r.ok) {
+    const error = new Error(
       (result as { error?: string }).error ||
         'Something went wrong. Please try again.',
-    );
+    ) as Error & { status?: number; code?: string };
+    error.status = r.status;
+    error.code = (result as { code?: string }).code;
+    throw error;
+  }
   return result as T;
 }
 function Picker({
@@ -125,16 +153,22 @@ function Picker({
   value,
   onChange,
   options,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
+  disabled?: boolean;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <NativeSelect value={value} onChange={(e) => onChange(e.target.value)}>
+      <NativeSelect
+        disabled={disabled}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -146,33 +180,178 @@ function Picker({
 }
 const opts = (items: string[]) =>
   items.map((value) => ({ value, label: value }));
-function TransactionFilterControls({ filters, errors, data, accounts, update }: {
+function TransactionFilterControls({
+  filters,
+  errors,
+  data,
+  accounts,
+  update,
+  disabled = false,
+}: {
   filters: TransactionFilters;
   errors: FilterErrors;
   data: AppData;
   accounts: Account[];
   update: (change: Partial<TransactionFilters>, message?: string) => void;
+  disabled?: boolean;
 }) {
   const currency = filters.currency;
   return (
     <div className="transaction-filters" aria-label="Transaction filters">
-      <label className="field filter-search" htmlFor="transaction-search"><span>Search</span><input id="transaction-search" value={filters.q} placeholder="Description or sub-description" onChange={(event) => update({ q: event.target.value })} /></label>
-      <Picker label="Currency" value={currency} onChange={(nextCurrency) => update({ currency: nextCurrency }, filters.importGroup ? 'The import group was cleared because the currency changed.' : '')} options={opts(['CAD', 'USD'])} />
-      <Picker label="Direction" value={filters.direction} onChange={(direction) => update({ direction: direction as TransactionFilters['direction'] })} options={[{ value: 'all', label: 'All directions' }, { value: 'debit', label: 'Money out' }, { value: 'credit', label: 'Money in' }]} />
-      <label className="field" htmlFor="minimum-amount"><span>Minimum amount</span><input id="minimum-amount" inputMode="decimal" value={filters.minAmount} onChange={(event) => update({ minAmount: event.target.value })} aria-invalid={!!errors.minAmount} />{errors.minAmount && <small className="filter-error">{errors.minAmount}</small>}</label>
-      <label className="field" htmlFor="maximum-amount"><span>Maximum amount</span><input id="maximum-amount" inputMode="decimal" value={filters.maxAmount} onChange={(event) => update({ maxAmount: event.target.value })} aria-invalid={!!errors.maxAmount} />{errors.maxAmount && <small className="filter-error">{errors.maxAmount}</small>}</label>
-      <Picker label="Category" value={filters.category} onChange={(category) => update({ category })} options={[{ value: 'all', label: 'All categories' }, { value: 'review', label: 'Needs review' }, ...data.categories.map((category) => ({ value: category.id, label: category.name + (category.archived ? ' (archived)' : '') }))]} />
-      <Picker label="Account" value={filters.account} onChange={(account) => update({ account }, filters.importGroup && account !== filters.account ? 'The import group was cleared because the account changed.' : '')} options={[{ value: 'all', label: 'All accounts' }, ...accounts.map((account) => ({ value: account.id, label: `${account.name}${account.archived ? ' (archived)' : ''}` }))]} />
-      <label className="field" htmlFor="date-from"><span>From</span><input id="date-from" type="date" value={filters.from} onChange={(event) => update({ from: event.target.value })} aria-invalid={!!errors.date} /></label>
-      <label className="field" htmlFor="date-to"><span>To</span><input id="date-to" type="date" value={filters.to} onChange={(event) => update({ to: event.target.value })} aria-invalid={!!errors.date} />{errors.date && <small className="filter-error">{errors.date}</small>}</label>
-      <Picker label="Import group" value={filters.importGroup} onChange={(importGroup) => {
-        const record = data.imports.find((item) => item.id === importGroup);
-        const account = record && data.accounts.find((item) => item.id === record.account_id);
-        update(record ? { importGroup, account: record.account_id, currency: account?.currency || currency } : { importGroup: '' });
-      }} options={[{ value: '', label: 'All imports' }, ...data.imports.map((item) => {
-        const account = data.accounts.find((candidate) => candidate.id === item.account_id);
-        return { value: item.id, label: `${item.filename} · ${account?.name || 'Account'} · ${new Date(item.created_at).toLocaleString()}` };
-      })]} />
+      <label className="field filter-search" htmlFor="transaction-search">
+        <span>Search</span>
+        <input
+          disabled={disabled}
+          id="transaction-search"
+          value={filters.q}
+          placeholder="Description or sub-description"
+          onChange={(event) => update({ q: event.target.value })}
+        />
+      </label>
+      <Picker
+        disabled={disabled}
+        label="Currency"
+        value={currency}
+        onChange={(nextCurrency) =>
+          update(
+            { currency: nextCurrency },
+            filters.importGroup
+              ? 'The import group was cleared because the currency changed.'
+              : '',
+          )
+        }
+        options={opts(['CAD', 'USD'])}
+      />
+      <Picker
+        disabled={disabled}
+        label="Direction"
+        value={filters.direction}
+        onChange={(direction) =>
+          update({ direction: direction as TransactionFilters['direction'] })
+        }
+        options={[
+          { value: 'all', label: 'All directions' },
+          { value: 'debit', label: 'Money out' },
+          { value: 'credit', label: 'Money in' },
+        ]}
+      />
+      <label className="field" htmlFor="minimum-amount">
+        <span>Minimum amount</span>
+        <input
+          disabled={disabled}
+          id="minimum-amount"
+          inputMode="decimal"
+          value={filters.minAmount}
+          onChange={(event) => update({ minAmount: event.target.value })}
+          aria-invalid={!!errors.minAmount}
+        />
+        {errors.minAmount && (
+          <small className="filter-error">{errors.minAmount}</small>
+        )}
+      </label>
+      <label className="field" htmlFor="maximum-amount">
+        <span>Maximum amount</span>
+        <input
+          disabled={disabled}
+          id="maximum-amount"
+          inputMode="decimal"
+          value={filters.maxAmount}
+          onChange={(event) => update({ maxAmount: event.target.value })}
+          aria-invalid={!!errors.maxAmount}
+        />
+        {errors.maxAmount && (
+          <small className="filter-error">{errors.maxAmount}</small>
+        )}
+      </label>
+      <Picker
+        disabled={disabled}
+        label="Category"
+        value={filters.category}
+        onChange={(category) => update({ category })}
+        options={[
+          { value: 'all', label: 'All categories' },
+          { value: 'review', label: 'Needs review' },
+          ...data.categories.map((category) => ({
+            value: category.id,
+            label: category.name + (category.archived ? ' (archived)' : ''),
+          })),
+        ]}
+      />
+      <Picker
+        disabled={disabled}
+        label="Account"
+        value={filters.account}
+        onChange={(account) =>
+          update(
+            { account },
+            filters.importGroup && account !== filters.account
+              ? 'The import group was cleared because the account changed.'
+              : '',
+          )
+        }
+        options={[
+          { value: 'all', label: 'All accounts' },
+          ...accounts.map((account) => ({
+            value: account.id,
+            label: `${account.name}${account.archived ? ' (archived)' : ''}`,
+          })),
+        ]}
+      />
+      <label className="field" htmlFor="date-from">
+        <span>From</span>
+        <input
+          disabled={disabled}
+          id="date-from"
+          type="date"
+          value={filters.from}
+          onChange={(event) => update({ from: event.target.value })}
+          aria-invalid={!!errors.date}
+        />
+      </label>
+      <label className="field" htmlFor="date-to">
+        <span>To</span>
+        <input
+          disabled={disabled}
+          id="date-to"
+          type="date"
+          value={filters.to}
+          onChange={(event) => update({ to: event.target.value })}
+          aria-invalid={!!errors.date}
+        />
+        {errors.date && <small className="filter-error">{errors.date}</small>}
+      </label>
+      <Picker
+        disabled={disabled}
+        label="Import group"
+        value={filters.importGroup}
+        onChange={(importGroup) => {
+          const record = data.imports.find((item) => item.id === importGroup);
+          const account =
+            record &&
+            data.accounts.find((item) => item.id === record.account_id);
+          update(
+            record
+              ? {
+                  importGroup,
+                  account: record.account_id,
+                  currency: account?.currency || currency,
+                }
+              : { importGroup: '' },
+          );
+        }}
+        options={[
+          { value: '', label: 'All imports' },
+          ...data.imports.map((item) => {
+            const account = data.accounts.find(
+              (candidate) => candidate.id === item.account_id,
+            );
+            return {
+              value: item.id,
+              label: `${item.filename} · ${account?.name || 'Account'} · ${new Date(item.created_at).toLocaleString()}`,
+            };
+          }),
+        ]}
+      />
     </div>
   );
 }
@@ -190,13 +369,31 @@ export default function Dashboard() {
     [importError, setImportError] = useState('');
   const [target, setTarget] = useState('new'),
     [accountDraft, setAccountDraft] = useState<AccountDraft>(EMPTY_ACCOUNT);
-  const [filters, setFilters] = useState<TransactionFilters>(DEFAULT_TRANSACTION_FILTERS),
+  const [filters, setFilters] = useState<TransactionFilters>(
+      DEFAULT_TRANSACTION_FILTERS,
+    ),
     [page, setPage] = useState(0),
     [locationRevision, setLocationRevision] = useState(0);
-  const [aiConfirm, setAiConfirm] = useState(false);
+  const filtersRef = useRef(filters);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteOperation, setDeleteOperation] =
+    useState<DeleteOperationView | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const stopDelete = useRef(false);
+  const pendingDeleteOperations = useRef(new Map<string, string>());
+  const [categorizeOperation, setCategorizeOperation] =
+    useState<CategorizeProgress | null>(null);
+  const [categorizeConfirmOpen, setCategorizeConfirmOpen] = useState(false);
+  const stopCategorize = useRef(false);
+  const pendingCategorizeOperations = useRef(new Map<string, string>());
   const [manageCategories, setManageCategories] = useState(false);
   const pendingReviewOperations = useRef(new Map<string, string>());
-  const pendingImportOperation = useRef<{ key: string; id: string } | null>(null);
+  const pendingImportOperation = useRef<{ key: string; id: string } | null>(
+    null,
+  );
   const [currentImportId, setCurrentImportId] = useState<string | null>(null);
   const [mappingBusy, setMappingBusy] = useState(false),
     [mappingNote, setMappingNote] = useState('');
@@ -205,7 +402,9 @@ export default function Dashboard() {
   useEffect(() => {
     const readLocation = () => {
       const params = new URLSearchParams(window.location.search);
-      setCurrentImportId(params.get('view') === 'import' ? params.get('importId') : null);
+      setCurrentImportId(
+        params.get('view') === 'import' ? params.get('importId') : null,
+      );
       setLocationRevision((revision) => revision + 1);
     };
     readLocation();
@@ -213,24 +412,52 @@ export default function Dashboard() {
     return () => window.removeEventListener('popstate', readLocation);
   }, []);
   const currency = filters.currency;
-  const updateFilters = useCallback((change: Partial<TransactionFilters>, message = '') => {
-    setFilters((current) => {
-      const next = { ...current, ...change };
-      if (change.currency && change.currency !== current.currency && change.importGroup === undefined) {
-        next.account = 'all';
-        next.importGroup = '';
+  const updateFilters = useCallback(
+    (change: Partial<TransactionFilters>, message = '') => {
+      if (busy === 'delete' || busy === 'ai') return;
+      setDeleteOperation(null);
+      setCategorizeOperation(null);
+      if (selectedIds.size) {
+        setSelectedIds(new Set());
+        setDeleteOperation(null);
+        message = [message, 'Selection cleared because the filters changed.']
+          .filter(Boolean)
+          .join(' ');
       }
-      if (change.account !== undefined && change.account !== current.account && current.importGroup && change.importGroup === undefined) {
-        const group = data.imports.find((item) => item.id === current.importGroup);
-        if (group && change.account !== group.account_id) next.importGroup = '';
-      }
-      const params = filtersToSearchParams(next, new URLSearchParams(window.location.search));
-      window.history.replaceState({}, '', `/?${params.toString()}`);
-      return next;
-    });
-    setPage(0);
-    if (message) setNotice(message);
-  }, [data.imports]);
+      setFilters((current) => {
+        const next = { ...current, ...change };
+        if (
+          change.currency &&
+          change.currency !== current.currency &&
+          change.importGroup === undefined
+        ) {
+          next.account = 'all';
+          next.importGroup = '';
+        }
+        if (
+          change.account !== undefined &&
+          change.account !== current.account &&
+          current.importGroup &&
+          change.importGroup === undefined
+        ) {
+          const group = data.imports.find(
+            (item) => item.id === current.importGroup,
+          );
+          if (group && change.account !== group.account_id)
+            next.importGroup = '';
+        }
+        const params = filtersToSearchParams(
+          next,
+          new URLSearchParams(window.location.search),
+        );
+        window.history.replaceState({}, '', `/?${params.toString()}`);
+        return next;
+      });
+      setPage(0);
+      if (message) setNotice(message);
+    },
+    [busy, data.imports, selectedIds.size],
+  );
   const categoryLabel = (id: string) =>
     data.categories.find((c) => c.id === id)?.name || id;
   function changeMapping(value: Mapping) {
@@ -322,12 +549,29 @@ export default function Dashboard() {
     do {
       const params = new URLSearchParams({ limit: '100' });
       if (cursor) params.set('cursor', cursor);
-      const page = await api<{ items: AppData['imports']; nextCursor: string | null }>(`imports?${params}`);
+      const page = await api<{
+        items: AppData['imports'];
+        nextCursor: string | null;
+      }>(`imports?${params}`);
       imports.push(...page.items);
       cursor = page.nextCursor;
     } while (cursor);
     const complete = { ...result, imports };
     setData(complete);
+    setSelectedIds((current) => {
+      if (!current.size) return current;
+      const matching = filterTransactions(
+        complete.transactions,
+        complete.accounts,
+        filtersRef.current,
+      ).filteredIds;
+      const intersected = intersectTransactionSelection(current, matching);
+      if (intersected.removed)
+        setNotice(
+          `${intersected.removed} selected transaction${intersected.removed === 1 ? ' was' : 's were'} removed because they are no longer available in this view.`,
+        );
+      return intersected.selection;
+    });
     return complete;
   }, []);
   useEffect(() => {
@@ -350,14 +594,26 @@ export default function Dashboard() {
     if (loading) return;
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
-      if (params.get('view') === 'import' && params.get('importId') && !params.get('importGroup'))
+      if (
+        params.get('view') === 'import' &&
+        params.get('importId') &&
+        !params.get('importGroup')
+      )
         params.set('importGroup', params.get('importId')!);
-      const parsed = filtersFromSearchParams(params, data.accounts, data.imports, data.categories.map((category) => category.id));
+      const parsed = filtersFromSearchParams(
+        params,
+        data.accounts,
+        data.imports,
+        data.categories.map((category) => category.id),
+      );
       setFilters(parsed.filters);
       setPage(0);
       if (parsed.notice) setNotice(parsed.notice);
       const normalized = filtersToSearchParams(parsed.filters, params);
-      if (normalized.toString() !== new URLSearchParams(window.location.search).toString())
+      if (
+        normalized.toString() !==
+        new URLSearchParams(window.location.search).toString()
+      )
         window.history.replaceState({}, '', `/?${normalized.toString()}`);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -367,15 +623,37 @@ export default function Dashboard() {
     [csv, mapping],
   );
   const accounts = data.accounts.filter((a) => a.currency === currency);
-  const { filteredTransactions, filteredIds, filterValid, errors: filterErrors } = useMemo(
+  const {
+    filteredTransactions,
+    filteredIds,
+    filterValid,
+    errors: filterErrors,
+  } = useMemo(
     () => filterTransactions(data.transactions, data.accounts, filters),
     [data.accounts, data.transactions, filters],
   );
   const visible = filteredTransactions;
-  void filteredIds;
+  const lastPage = Math.max(0, Math.ceil(visible.length / 25) - 1);
+  const currentPage = Math.min(page, lastPage);
+  const pageTransactions = visible.slice(
+    currentPage * 25,
+    currentPage * 25 + 25,
+  );
+  const pageIds = pageTransactions.map((transaction) => transaction.id);
+  const pageSelection = pageSelectionState(selectedIds, pageIds);
   const totals = summary(filteredTransactions, data.categories);
-  const uncategorized = data.transactions.filter((t) => t.source === 'none'),
-    reviewCount = filteredTransactions.filter(needsReview).length;
+  const selectedTransactions = data.transactions.filter((transaction) =>
+    selectedIds.has(transaction.id),
+  );
+  const eligibleSelected = selectedTransactions.filter(
+    isCategorizationEligible,
+  );
+  const protectedSelected =
+    selectedTransactions.length - eligibleSelected.length;
+  const rerunSelected = eligibleSelected.filter(
+    (transaction) => transaction.source === 'ai',
+  ).length;
+  const reviewCount = filteredTransactions.filter(needsReview).length;
   const spending = data.categories
     .filter((c) => ['expense', 'unclassified'].includes(c.kind))
     .map((definition) => ({
@@ -408,6 +686,80 @@ export default function Dashboard() {
       return `${colors[i % colors.length]} ${start}% ${start + (s.amount / spendingTotal) * 100}%`;
     })
     .join(',');
+  async function runDeletion(capturedIds: readonly string[]) {
+    const captured = [...capturedIds];
+    const batches = deleteBatches(captured);
+    let progress = beginDeleteProgress(captured);
+    stopDelete.current = false;
+    setDeleteConfirmOpen(false);
+    setBusy('delete');
+    setError('');
+    setDeleteOperation(progress);
+    for (let index = 0; index < batches.length; index++) {
+      if (stopDelete.current) {
+        progress = haltDeleteProgress(progress, 'stopped');
+        setDeleteOperation(progress);
+        setBusy('');
+        return;
+      }
+      const ids = batches[index];
+      const key = JSON.stringify([...ids].sort());
+      const operationId =
+        pendingDeleteOperations.current.get(key) || crypto.randomUUID();
+      pendingDeleteOperations.current.set(key, operationId);
+      try {
+        const result = await api<{
+          deletedIds: string[];
+          unavailableIds: string[];
+        }>('transactions/delete', 'POST', { operationId, ids });
+        pendingDeleteOperations.current.delete(key);
+        progress = commitDeleteBatch(progress, ids, result);
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+        setData((current) => ({
+          ...current,
+          transactions: current.transactions.filter(
+            (transaction) => !result.deletedIds.includes(transaction.id),
+          ),
+        }));
+        setDeleteOperation(progress);
+      } catch (caught) {
+        progress = haltDeleteProgress(
+          progress,
+          'failed',
+          (caught as Error).message,
+        );
+        setDeleteOperation(progress);
+        return;
+      }
+    }
+    setDeleteOperation(progress);
+    setBusy('');
+    setNotice(
+      `${progress.deleted} transaction${progress.deleted === 1 ? '' : 's'} deleted.${
+        progress.unavailable
+          ? ` ${progress.unavailable} ${progress.unavailable === 1 ? 'was' : 'were'} already unavailable.`
+          : ''
+      } Import and review history was kept.`,
+    );
+    await refresh().catch((caught) => setError((caught as Error).message));
+  }
+  function selectedInFilterOrder() {
+    return filteredIds.filter((id) => selectedIds.has(id));
+  }
+  function editSelection(update: (current: Set<string>) => Set<string>) {
+    if (busy === 'delete' || busy === 'ai') return;
+    setSelectedIds(update);
+    setDeleteOperation((current) =>
+      current?.status === 'stopped' ? null : current,
+    );
+    setCategorizeOperation((current) =>
+      current?.status === 'stopped' ? null : current,
+    );
+  }
   async function reviewTransaction(
     transaction: Transaction,
     category: Category,
@@ -437,30 +789,43 @@ export default function Dashboard() {
         expectedRevision: transaction.category_revision,
       });
       pendingReviewOperations.current.delete(operationKey);
+      const reviewedTransaction = {
+        ...transaction,
+        category: saved.category,
+        source: saved.source ?? transaction.source,
+        confidence:
+          saved.confidence === undefined
+            ? transaction.confidence
+            : saved.confidence,
+        category_revision: saved.categoryRevision,
+        reviewed_at: saved.reviewedAt,
+        has_review: true,
+        memory_enabled: saved.memoryEnabled ? 1 : 0,
+        categorization_evidence:
+          action === 'correct' || action === 'confirm'
+            ? null
+            : transaction.categorization_evidence,
+      };
       setData((d) => ({
         ...d,
         transactions: d.transactions.map((t) =>
-          t.id === transaction.id
-            ? {
-                ...t,
-                category: saved.category,
-                source: saved.source ?? t.source,
-                confidence:
-                  saved.confidence === undefined
-                    ? t.confidence
-                    : saved.confidence,
-                category_revision: saved.categoryRevision,
-                reviewed_at: saved.reviewedAt,
-                memory_enabled: saved.memoryEnabled ? 1 : 0,
-                categorization_evidence:
-                  action === 'correct' || action === 'confirm'
-                    ? null
-                    : t.categorization_evidence,
-              }
-            : t,
+          t.id === transaction.id ? reviewedTransaction : t,
         ),
       }));
-      setNotice('Category accepted and available for future categorization.');
+      if (
+        selectedIds.has(transaction.id) &&
+        !filterTransactions([reviewedTransaction], data.accounts, filters)
+          .filteredIds.length
+      ) {
+        setSelectedIds((current) =>
+          toggleTransaction(current, transaction.id, false),
+        );
+        setNotice(
+          'The reviewed transaction was removed from the selection because it no longer matches the filters.',
+        );
+      } else {
+        setNotice('Category accepted and available for future categorization.');
+      }
     } catch (e) {
       setError((e as Error).message);
       if ((e as Error).message.includes('changed'))
@@ -584,11 +949,14 @@ export default function Dashboard() {
           ? pendingImportOperation.current.id
           : crypto.randomUUID();
       pendingImportOperation.current = { key: requestKey, id: operationId };
-      const r = await api<{ importId: string; accountId: string; currency: string; added: number; skipped: number; enriched: number }>(
-        'import',
-        'POST',
-        { ...requestPayload, operationId },
-      );
+      const r = await api<{
+        importId: string;
+        accountId: string;
+        currency: string;
+        added: number;
+        skipped: number;
+        enriched: number;
+      }>('import', 'POST', { ...requestPayload, operationId });
       pendingImportOperation.current = null;
       await refresh();
       setShowImport(false);
@@ -599,7 +967,10 @@ export default function Dashboard() {
         importGroup: r.importId,
       };
       setFilters(importedFilters);
-      const params = filtersToSearchParams(importedFilters, new URLSearchParams({ view: 'import', importId: r.importId }));
+      const params = filtersToSearchParams(
+        importedFilters,
+        new URLSearchParams({ view: 'import', importId: r.importId }),
+      );
       const nextUrl = `/?${params.toString()}`;
       window.history.pushState({}, '', nextUrl);
       setCurrentImportId(r.importId);
@@ -609,68 +980,299 @@ export default function Dashboard() {
       setBusy('');
     }
   }
-  async function categorize() {
-    setAiConfirm(false);
+  async function categorize(capturedIds: readonly string[]) {
+    const captured = [...capturedIds];
+    const batches = categorizeBatches(captured);
+    let progress = beginCategorizeProgress(captured);
+    stopCategorize.current = false;
+    setCategorizeConfirmOpen(false);
+    setDeleteOperation(null);
     setBusy('ai');
     setError('');
-    let completed = 0;
-    try {
-      for (let i = 0; i < uncategorized.length; i += 60) {
-        const result = await api<{ categorized: number }>(
-          'categorize',
-          'POST',
-          { ids: uncategorized.slice(i, i + 60).map((t) => t.id) },
-        );
-        completed += result.categorized;
-        setNotice(
-          `AI categorized ${completed} of ${uncategorized.length} transactions…`,
-        );
-        await refresh();
+    setCategorizeOperation(progress);
+    for (const ids of batches) {
+      if (stopCategorize.current) {
+        progress = haltCategorizeProgress(progress, 'stopped');
+        setCategorizeOperation(progress);
+        setBusy('');
+        return;
       }
-      setNotice(
-        `AI categorized ${completed} transactions. Review suggestions and adjust any category.`,
-      );
-    } catch (e) {
-      setError((e as Error).message);
-      setNotice(
-        completed
-          ? `${completed} transactions categorized. Your other transactions are saved.`
-          : '',
-      );
-    } finally {
-      setBusy('');
+      const key = categorizeRequestKey(ids);
+      const operationId =
+        pendingCategorizeOperations.current.get(key) || crypto.randomUUID();
+      pendingCategorizeOperations.current.set(key, operationId);
+      try {
+        const result = await api<{
+          categorizedIds: string[];
+          protectedIds: string[];
+          unavailableIds: string[];
+        }>('categorize', 'POST', { operationId, ids });
+        pendingCategorizeOperations.current.delete(key);
+        progress = commitCategorizeBatch(progress, ids, result);
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (const id of ids) next.delete(id);
+          return next;
+        });
+        setCategorizeOperation(progress);
+        await refresh();
+      } catch (caught) {
+        const apiError = caught as Error & { code?: string };
+        if (apiError.code === 'stale_context') {
+          pendingCategorizeOperations.current.delete(key);
+          await refresh().catch(() => undefined);
+        }
+        progress = haltCategorizeProgress(progress, 'failed', apiError.message);
+        setCategorizeOperation(progress);
+        setBusy('');
+        return;
+      }
     }
+    setBusy('');
+    setCategorizeOperation(progress);
+    setNotice(
+      `${progress.categorized} transaction${progress.categorized === 1 ? '' : 's'} categorized.${progress.protected ? ` ${progress.protected} protected ${progress.protected === 1 ? 'transaction was' : 'transactions were'} skipped.` : ''}${progress.unavailable ? ` ${progress.unavailable} ${progress.unavailable === 1 ? 'was' : 'were'} unavailable.` : ''} Review AI suggestions before accepting them.`,
+    );
   }
   if (currentImportId)
     return (
       <div className="app-shell">
         <header className="topbar">
-          <Link className="brand" href="/?view=transactions"><WalletCards size={26} /> account<span>view</span></Link>
-          <div className="top-right"><span className="privacy"><ShieldCheck size={16} /> Private workspace</span>{/* oxlint-disable-next-line next/no-html-link-for-pages -- auth requires a top-level navigation */}<a className="signout" href="/signout-with-chatgpt?return_to=%2F" target="_top">Sign out</a></div>
+          <Link className="brand" href="/?view=transactions">
+            <WalletCards size={26} /> account<span>view</span>
+          </Link>
+          <div className="top-right">
+            <span className="privacy">
+              <ShieldCheck size={16} /> Private workspace
+            </span>
+            {/* oxlint-disable-next-line next/no-html-link-for-pages -- auth requires a top-level navigation */}
+            <a
+              className="signout"
+              href="/signout-with-chatgpt?return_to=%2F"
+              target="_top"
+            >
+              Sign out
+            </a>
+          </div>
         </header>
         <ImportResults importId={currentImportId}>
           <section className="section transaction-panel import-transaction-panel">
+            {error && (
+              <div className="message error" role="alert">
+                {error}
+              </div>
+            )}
+            {notice && (
+              <output className="message success">
+                <CheckCircle2 size={18} />
+                {notice}
+                <button
+                  onClick={() => setNotice('')}
+                  aria-label="Dismiss notification"
+                >
+                  ×
+                </button>
+              </output>
+            )}
             <div className="transaction-heading">
-              <div><h2>New transactions <span className="count">{visible.length}</span></h2><p className="subtle">Transactions added by this import and still available.</p></div>
-              <div className="results-table-actions"><button className="secondary" disabled={JSON.stringify(filters) === JSON.stringify({ ...DEFAULT_TRANSACTION_FILTERS, currency })} onClick={() => updateFilters({ ...DEFAULT_TRANSACTION_FILTERS, currency })}>Clear filters</button><Link className="secondary-link" href={`/?${filtersToSearchParams(filters, new URLSearchParams({ view: 'transactions' })).toString()}`}>Open full transaction view</Link></div>
+              <div>
+                <h2>
+                  New transactions{' '}
+                  <span className="count">{visible.length}</span>
+                </h2>
+                <p className="subtle">
+                  Transactions added by this import and still available.
+                </p>
+              </div>
+              <div className="results-table-actions">
+                <button
+                  className="secondary"
+                  disabled={
+                    busy === 'delete' ||
+                    busy === 'ai' ||
+                    JSON.stringify(filters) ===
+                      JSON.stringify({
+                        ...DEFAULT_TRANSACTION_FILTERS,
+                        currency,
+                      })
+                  }
+                  onClick={() =>
+                    updateFilters({ ...DEFAULT_TRANSACTION_FILTERS, currency })
+                  }
+                >
+                  Clear filters
+                </button>
+                <Link
+                  className="secondary-link"
+                  href={`/?${filtersToSearchParams(filters, new URLSearchParams({ view: 'transactions' })).toString()}`}
+                >
+                  Open full transaction view
+                </Link>
+              </div>
             </div>
-            <TransactionFilterControls filters={filters} errors={filterErrors} data={data} accounts={accounts} update={updateFilters} />
-            {!filterValid && <div className="message error" role="alert">Correct the filter values to show transactions.</div>}
+            <TransactionFilterControls
+              disabled={busy === 'delete' || busy === 'ai'}
+              filters={filters}
+              errors={filterErrors}
+              data={data}
+              accounts={accounts}
+              update={updateFilters}
+            />
+            {!filterValid && (
+              <div className="message error" role="alert">
+                Correct the filter values to show transactions.
+              </div>
+            )}
+            <TransactionSelectionToolbar
+              selectedCount={selectedIds.size}
+              matchingCount={filteredIds.length}
+              eligibleCount={eligibleSelected.length}
+              protectedCount={protectedSelected}
+              rerunCount={rerunSelected}
+              aiReady={data.aiReady}
+              deleteOperation={deleteOperation}
+              categorizeOperation={categorizeOperation}
+              deleteConfirmOpen={deleteConfirmOpen}
+              categorizeConfirmOpen={categorizeConfirmOpen}
+              onDeleteConfirmOpenChange={setDeleteConfirmOpen}
+              onCategorizeConfirmOpenChange={setCategorizeConfirmOpen}
+              onSelectAll={() =>
+                editSelection(() => captureMatchingTransactions(filteredIds))
+              }
+              onClear={() => {
+                setSelectedIds(new Set());
+                setDeleteOperation(null);
+              }}
+              onDelete={() => void runDeletion(selectedInFilterOrder())}
+              onCategorize={() => void categorize(selectedInFilterOrder())}
+              onStopDelete={() => {
+                stopDelete.current = true;
+              }}
+              onStopCategorize={() => {
+                stopCategorize.current = true;
+              }}
+              onRetryDelete={() =>
+                deleteOperation && void runDeletion(deleteOperation.remaining)
+              }
+              onRetryCategorize={() =>
+                categorizeOperation &&
+                void categorize(categorizeOperation.remaining)
+              }
+            />
             <Table>
-              <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead>Sub-description</TableHead><TableHead>Account</TableHead><TableHead>Category</TableHead><TableHead className="right">Amount</TableHead></TableRow></TableHeader>
-              <TableBody>{visible.slice(page * 25, page * 25 + 25).map((transaction) => (
-                <TableRow key={transaction.id}>
-                  <TableCell className="date-cell">{transaction.date}</TableCell>
-                  <TableCell className="description-cell">{transaction.description}</TableCell>
-                  <TableCell className="sub-description-cell">{transaction.sub_description || <span className="subtle">—</span>}</TableCell>
-                  <TableCell><span className="subtle">{data.accounts.find((account) => account.id === transaction.account_id)?.name}</span></TableCell>
-                  <TableCell>{categoryLabel(transaction.category)}</TableCell>
-                  <TableCell className={'right amount ' + (transaction.amount > 0 ? 'income' : '')}>{transaction.amount > 0 ? '+' : ''}{money(transaction.amount, currency)}</TableCell>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="selection-cell">
+                    <Checkbox
+                      aria-label="Select all transactions on this page"
+                      checked={pageSelection.checked}
+                      indeterminate={pageSelection.indeterminate}
+                      disabled={
+                        busy === 'delete' || busy === 'ai' || !pageIds.length
+                      }
+                      onCheckedChange={(checked) =>
+                        editSelection((current) =>
+                          toggleTransactionPage(
+                            current,
+                            pageIds,
+                            checked === true,
+                          ),
+                        )
+                      }
+                    />
+                  </TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Sub-description</TableHead>
+                  <TableHead>Account</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="right">Amount</TableHead>
                 </TableRow>
-              ))}</TableBody>
+              </TableHeader>
+              <TableBody>
+                {pageTransactions.map((transaction) => (
+                  <TableRow key={transaction.id}>
+                    <TableCell className="selection-cell">
+                      <Checkbox
+                        aria-label={`Select ${transaction.description} on ${transaction.date}`}
+                        checked={selectedIds.has(transaction.id)}
+                        disabled={busy === 'delete' || busy === 'ai'}
+                        onCheckedChange={(checked) =>
+                          editSelection((current) =>
+                            toggleTransaction(
+                              current,
+                              transaction.id,
+                              checked === true,
+                            ),
+                          )
+                        }
+                      />
+                    </TableCell>
+                    <TableCell className="date-cell">
+                      {transaction.date}
+                    </TableCell>
+                    <TableCell className="description-cell">
+                      {transaction.description}
+                    </TableCell>
+                    <TableCell className="sub-description-cell">
+                      {transaction.sub_description || (
+                        <span className="subtle">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span className="subtle">
+                        {
+                          data.accounts.find(
+                            (account) => account.id === transaction.account_id,
+                          )?.name
+                        }
+                      </span>
+                    </TableCell>
+                    <TableCell>{categoryLabel(transaction.category)}</TableCell>
+                    <TableCell
+                      className={
+                        'right amount ' +
+                        (transaction.amount > 0 ? 'income' : '')
+                      }
+                    >
+                      {transaction.amount > 0 ? '+' : ''}
+                      {money(transaction.amount, currency)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
             </Table>
-            {!visible.length && <div className="small-empty">No new transactions remain from this import. Matching rows are still shown above.</div>}
-            <div className="table-footer"><span>{visible.length ? `${page * 25 + 1}–${Math.min(page * 25 + 25, visible.length)} of ${visible.length}` : '0 transactions'}</span><div><button className="icon-button" aria-label="Previous page" disabled={page === 0} onClick={() => setPage((value) => value - 1)}><ChevronLeft size={18} /></button><button className="icon-button" aria-label="Next page" disabled={(page + 1) * 25 >= visible.length} onClick={() => setPage((value) => value + 1)}><ChevronRight size={18} /></button></div></div>
+            {!visible.length && (
+              <div className="small-empty">
+                No new transactions remain from this import. Matching rows are
+                still shown above.
+              </div>
+            )}
+            <div className="table-footer">
+              <span>
+                {visible.length
+                  ? `${currentPage * 25 + 1}–${Math.min(currentPage * 25 + 25, visible.length)} of ${visible.length}`
+                  : '0 transactions'}
+              </span>
+              <div>
+                <button
+                  className="icon-button"
+                  aria-label="Previous page"
+                  disabled={currentPage === 0}
+                  onClick={() => setPage(Math.max(0, currentPage - 1))}
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Next page"
+                  disabled={(currentPage + 1) * 25 >= visible.length}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            </div>
           </section>
         </ImportResults>
       </div>
@@ -752,10 +1354,13 @@ export default function Dashboard() {
           <Picker
             label="Currency"
             value={currency}
+            disabled={busy === 'delete' || busy === 'ai'}
             onChange={(v) => {
               updateFilters(
                 { currency: v },
-                filters.importGroup ? 'The import group was cleared because the currency changed.' : '',
+                filters.importGroup
+                  ? 'The import group was cleared because the currency changed.'
+                  : '',
               );
             }}
             options={opts(['CAD', 'USD'])}
@@ -854,7 +1459,9 @@ export default function Dashboard() {
                           <button
                             className="legend-row"
                             key={categoryLabel(s.category)}
-                            onClick={() => updateFilters({ category: s.category })}
+                            onClick={() =>
+                              updateFilters({ category: s.category })
+                            }
                           >
                             <span className="legend-label">
                               <i
@@ -881,44 +1488,6 @@ export default function Dashboard() {
                     </div>
                   )}
                 </section>
-                <section className="ai-panel">
-                  <div className="ai-icon">
-                    <Sparkles size={23} />
-                  </div>
-                  <h3>A little clarity, powered by AI.</h3>
-                  <p>
-                    Get suggested categories for your transactions, then make
-                    them your own.
-                  </p>
-                  <button
-                    className="primary"
-                    disabled={!!busy || !data.aiReady || !uncategorized.length}
-                    onClick={() => setAiConfirm(true)}
-                  >
-                    {busy === 'ai' ? (
-                      <LoaderCircle className="spin" size={16} />
-                    ) : (
-                      <Sparkles size={16} />
-                    )}{' '}
-                    {busy === 'ai'
-                      ? 'Categorizing…'
-                      : `Categorize ${uncategorized.length} transactions`}
-                  </button>
-                  <span className="subtle">
-                    {data.aiReady
-                      ? 'Your manual categories are always kept.'
-                      : 'AI connection pending. Manual categories are available below.'}
-                  </span>
-                  {reviewCount > 0 && (
-                    <button
-                      className="review-link"
-                      onClick={() => updateFilters({ category: 'review' })}
-                    >
-                      {reviewCount} transactions to review{' '}
-                      <ArrowRight size={15} />
-                    </button>
-                  )}
-                </section>
               </div>
             </section>
             <section className="section transaction-panel">
@@ -929,19 +1498,105 @@ export default function Dashboard() {
                   </h2>
                   <p className="subtle">Change any category to correct it.</p>
                 </div>
+                {reviewCount > 0 && (
+                  <button
+                    className="review-link"
+                    disabled={busy === 'delete' || busy === 'ai'}
+                    onClick={() => updateFilters({ category: 'review' })}
+                  >
+                    {reviewCount} transactions to review{' '}
+                    <ArrowRight size={15} />
+                  </button>
+                )}
                 <button
                   className="secondary"
-                  disabled={JSON.stringify(filters) === JSON.stringify({ ...DEFAULT_TRANSACTION_FILTERS, currency })}
-                  onClick={() => updateFilters({ ...DEFAULT_TRANSACTION_FILTERS, currency })}
+                  disabled={
+                    busy === 'delete' ||
+                    busy === 'ai' ||
+                    JSON.stringify(filters) ===
+                      JSON.stringify({
+                        ...DEFAULT_TRANSACTION_FILTERS,
+                        currency,
+                      })
+                  }
+                  onClick={() =>
+                    updateFilters({ ...DEFAULT_TRANSACTION_FILTERS, currency })
+                  }
                 >
                   Clear filters
                 </button>
               </div>
-              <TransactionFilterControls filters={filters} errors={filterErrors} data={data} accounts={accounts} update={updateFilters} />
-              {!filterValid && <div className="message error" role="alert">Correct the filter values to show transactions.</div>}
+              <TransactionFilterControls
+                disabled={busy === 'delete' || busy === 'ai'}
+                filters={filters}
+                errors={filterErrors}
+                data={data}
+                accounts={accounts}
+                update={updateFilters}
+              />
+              {!filterValid && (
+                <div className="message error" role="alert">
+                  Correct the filter values to show transactions.
+                </div>
+              )}
+              <TransactionSelectionToolbar
+                selectedCount={selectedIds.size}
+                matchingCount={filteredIds.length}
+                eligibleCount={eligibleSelected.length}
+                protectedCount={protectedSelected}
+                rerunCount={rerunSelected}
+                aiReady={data.aiReady}
+                deleteOperation={deleteOperation}
+                categorizeOperation={categorizeOperation}
+                deleteConfirmOpen={deleteConfirmOpen}
+                categorizeConfirmOpen={categorizeConfirmOpen}
+                onDeleteConfirmOpenChange={setDeleteConfirmOpen}
+                onCategorizeConfirmOpenChange={setCategorizeConfirmOpen}
+                onSelectAll={() =>
+                  editSelection(() => captureMatchingTransactions(filteredIds))
+                }
+                onClear={() => {
+                  setSelectedIds(new Set());
+                  setDeleteOperation(null);
+                }}
+                onDelete={() => void runDeletion(selectedInFilterOrder())}
+                onCategorize={() => void categorize(selectedInFilterOrder())}
+                onStopDelete={() => {
+                  stopDelete.current = true;
+                }}
+                onStopCategorize={() => {
+                  stopCategorize.current = true;
+                }}
+                onRetryDelete={() =>
+                  deleteOperation && void runDeletion(deleteOperation.remaining)
+                }
+                onRetryCategorize={() =>
+                  categorizeOperation &&
+                  void categorize(categorizeOperation.remaining)
+                }
+              />
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="selection-cell">
+                      <Checkbox
+                        aria-label="Select all transactions on this page"
+                        checked={pageSelection.checked}
+                        indeterminate={pageSelection.indeterminate}
+                        disabled={
+                          busy === 'delete' || busy === 'ai' || !pageIds.length
+                        }
+                        onCheckedChange={(checked) =>
+                          editSelection((current) =>
+                            toggleTransactionPage(
+                              current,
+                              pageIds,
+                              checked === true,
+                            ),
+                          )
+                        }
+                      />
+                    </TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Sub-description</TableHead>
@@ -951,13 +1606,31 @@ export default function Dashboard() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visible.slice(page * 25, page * 25 + 25).map((t) => (
+                  {pageTransactions.map((t) => (
                     <TableRow key={t.id}>
+                      <TableCell className="selection-cell">
+                        <Checkbox
+                          aria-label={`Select ${t.description} on ${t.date}`}
+                          checked={selectedIds.has(t.id)}
+                          disabled={busy === 'delete' || busy === 'ai'}
+                          onCheckedChange={(checked) =>
+                            editSelection((current) =>
+                              toggleTransaction(
+                                current,
+                                t.id,
+                                checked === true,
+                              ),
+                            )
+                          }
+                        />
+                      </TableCell>
                       <TableCell className="date-cell">{t.date}</TableCell>
                       <TableCell className="description-cell">
                         {t.description}
                       </TableCell>
-                      <TableCell className="sub-description-cell">{t.sub_description || <span className="subtle">—</span>}</TableCell>
+                      <TableCell className="sub-description-cell">
+                        {t.sub_description || <span className="subtle">—</span>}
+                      </TableCell>
                       <TableCell>
                         <span className="subtle">
                           {
@@ -1113,23 +1786,23 @@ export default function Dashboard() {
               <div className="table-footer">
                 <span>
                   {visible.length
-                    ? `${page * 25 + 1}–${Math.min(page * 25 + 25, visible.length)} of ${visible.length}`
+                    ? `${currentPage * 25 + 1}–${Math.min(currentPage * 25 + 25, visible.length)} of ${visible.length}`
                     : '0 transactions'}
                 </span>
                 <div>
                   <button
                     className="icon-button"
                     aria-label="Previous page"
-                    disabled={page === 0}
-                    onClick={() => setPage((p) => p - 1)}
+                    disabled={currentPage === 0}
+                    onClick={() => setPage(Math.max(0, currentPage - 1))}
                   >
                     <ChevronLeft size={18} />
                   </button>
                   <button
                     className="icon-button"
                     aria-label="Next page"
-                    disabled={(page + 1) * 25 >= visible.length}
-                    onClick={() => setPage((p) => p + 1)}
+                    disabled={(currentPage + 1) * 25 >= visible.length}
+                    onClick={() => setPage(currentPage + 1)}
                   >
                     <ChevronRight size={18} />
                   </button>
@@ -1434,31 +2107,6 @@ export default function Dashboard() {
         categories={data.categories}
         onSaved={refresh}
       />
-      <Dialog open={aiConfirm} onOpenChange={setAiConfirm}>
-        <DialogContent className="confirm-dialog">
-          <DialogHeader>
-            <DialogTitle>Suggest transaction categories</DialogTitle>
-            <DialogDescription>
-              Send descriptions, sub-descriptions, amounts, currency, and
-              account type for {uncategorized.length} uncategorized transactions
-              to OpenAI. Account owner details, account nicknames, and full CSV
-              files are excluded.
-            </DialogDescription>
-          </DialogHeader>
-          <p className="subtle">
-            AI suggestions can be wrong. Review transfers and uncertain
-            categories. Your manual edits won’t be overwritten.
-          </p>
-          <div className="dialog-actions">
-            <button className="secondary" onClick={() => setAiConfirm(false)}>
-              Cancel
-            </button>
-            <button className="primary" onClick={categorize}>
-              <Sparkles size={16} /> Categorize
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -15,7 +15,7 @@ export async function GET() {
         .bind(user.userId),
       db
         .prepare(
-          'SELECT t.id,t.account_id,t.import_id,t.date,t.description,t.sub_description,t.amount,t.category,t.source,t.confidence,t.category_revision,t.categorization_evidence,r.reviewed_at,r.memory_enabled FROM transactions t LEFT JOIN transaction_reviews r ON r.user_id=t.user_id AND r.transaction_id=t.id WHERE t.user_id=? ORDER BY t.date DESC,t.id DESC',
+          'SELECT t.id,t.account_id,t.import_id,t.date,t.description,t.sub_description,t.amount,t.category,t.source,t.confidence,t.category_revision,t.categorization_evidence,r.reviewed_at,r.memory_enabled,(r.transaction_id IS NOT NULL) has_review FROM transactions t LEFT JOIN transaction_reviews r ON r.user_id=t.user_id AND r.transaction_id=t.id WHERE t.user_id=? ORDER BY t.date DESC,t.id DESC',
         )
         .bind(user.userId),
       db
@@ -31,7 +31,12 @@ export async function GET() {
           archived: Boolean(account.archived),
         }),
       ),
-      transactions: transactions.results,
+      transactions: (
+        transactions.results as Array<Record<string, unknown>>
+      ).map((transaction) => ({
+        ...transaction,
+        has_review: Boolean(transaction.has_review),
+      })),
       imports: imports.results,
       categories: await getCategories(user.userId),
       aiReady: Boolean(env.OPENAI_API_KEY),

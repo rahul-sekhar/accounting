@@ -34,7 +34,11 @@ export async function loadReviewRows(userId: string, pageSize = 500) {
     const page = (
       await db
         .prepare(
-          'SELECT transaction_id,category_id,memory_enabled,revision,reviewed_at,description,sub_description,amount,currency,account_id,account_type,origin FROM transaction_reviews WHERE user_id=? AND transaction_id>? ORDER BY transaction_id LIMIT ?',
+          `SELECT r.transaction_id,r.category_id,r.memory_enabled,r.revision,r.reviewed_at,
+            r.description,r.sub_description,r.amount,r.currency,r.account_id,r.account_type,r.origin
+           FROM transaction_reviews r
+           JOIN transactions t ON t.id=r.transaction_id AND t.user_id=r.user_id
+           WHERE r.user_id=? AND r.transaction_id>? ORDER BY r.transaction_id LIMIT ?`,
         )
         .bind(userId, after, pageSize)
         .all<{
@@ -105,7 +109,10 @@ export async function saveReview(
   });
   const existing = await db
     .prepare(
-      'SELECT input_hash,resulting_category_id,resulting_memory_enabled,resulting_revision,reviewed_at FROM transaction_review_events WHERE user_id=? AND operation_id=?',
+      `SELECT e.input_hash,e.resulting_category_id,e.resulting_memory_enabled,
+        e.resulting_revision,e.reviewed_at,
+        EXISTS(SELECT 1 FROM transactions t WHERE t.id=e.transaction_id AND t.user_id=e.user_id) transaction_exists
+       FROM transaction_review_events e WHERE e.user_id=? AND e.operation_id=?`,
     )
     .bind(userId, input.operationId)
     .first<{
@@ -114,10 +121,16 @@ export async function saveReview(
       resulting_memory_enabled: number;
       resulting_revision: number;
       reviewed_at: string | null;
+      transaction_exists: number;
     }>();
   if (existing) {
     if (existing.input_hash !== inputHash)
-      throw new AppError('This review operation was already used for different changes.', 409);
+      throw new AppError(
+        'This review operation was already used for different changes.',
+        409,
+      );
+    if (!existing.transaction_exists)
+      throw new AppError('Transaction not found.', 404);
     return {
       saved: true,
       replayed: true,
@@ -136,10 +149,16 @@ export async function saveReview(
   if (!row) throw new AppError('Transaction not found.', 404);
   if (row.category_revision !== input.expectedRevision)
     throw new AppError('This transaction changed. Refresh and try again.', 409);
-  const toggling = input.action === 'memory_enable' || input.action === 'memory_disable';
+  const toggling =
+    input.action === 'memory_enable' || input.action === 'memory_disable';
   if (toggling && row.memory_enabled === null)
-    throw new AppError('Review this transaction before changing its memory setting.');
-  if ((input.action === 'confirm' || toggling) && input.category !== row.category)
+    throw new AppError(
+      'Review this transaction before changing its memory setting.',
+    );
+  if (
+    (input.action === 'confirm' || toggling) &&
+    input.category !== row.category
+  )
     throw new AppError('The category changed. Refresh and try again.', 409);
   const categories = await getCategories(userId);
   const category = categories.find((item) => item.id === input.category);
@@ -209,11 +228,21 @@ export async function saveReview(
       ),
     toggling
       ? db
-          .prepare('UPDATE transactions SET category_revision=? WHERE id=? AND user_id=? AND category_revision=?')
+          .prepare(
+            'UPDATE transactions SET category_revision=? WHERE id=? AND user_id=? AND category_revision=?',
+          )
           .bind(nextRevision, row.id, userId, input.expectedRevision)
       : db
-          .prepare("UPDATE transactions SET category=?,source='manual',confidence=NULL,category_revision=?,categorization_evidence=NULL WHERE id=? AND user_id=? AND category_revision=?")
-          .bind(input.category, nextRevision, row.id, userId, input.expectedRevision),
+          .prepare(
+            "UPDATE transactions SET category=?,source='manual',confidence=NULL,category_revision=?,categorization_evidence=NULL WHERE id=? AND user_id=? AND category_revision=?",
+          )
+          .bind(
+            input.category,
+            nextRevision,
+            row.id,
+            userId,
+            input.expectedRevision,
+          ),
     db
       .prepare(
         `INSERT INTO categorization_contexts (user_id,revision)
@@ -224,16 +253,28 @@ export async function saveReview(
   ];
   try {
     const results = await db.batch(statements);
-    if (!results[0].meta.changes || !results[1].meta.changes || !results[2].meta.changes)
-      throw new AppError('This transaction changed. Refresh and try again.', 409);
+    if (
+      !results[0].meta.changes ||
+      !results[1].meta.changes ||
+      !results[2].meta.changes
+    )
+      throw new AppError(
+        'This transaction changed. Refresh and try again.',
+        409,
+      );
   } catch (error) {
     const replay = await db
-      .prepare('SELECT input_hash FROM transaction_review_events WHERE user_id=? AND operation_id=?')
+      .prepare(
+        'SELECT input_hash FROM transaction_review_events WHERE user_id=? AND operation_id=?',
+      )
       .bind(userId, input.operationId)
       .first<{ input_hash: string }>();
     if (replay) {
       if (replay.input_hash !== inputHash)
-        throw new AppError('This review operation was already used for different changes.', 409);
+        throw new AppError(
+          'This review operation was already used for different changes.',
+          409,
+        );
       return saveReview(userId, input);
     }
     throw error;
@@ -293,8 +334,14 @@ export async function backfillLegacyReviews(userId: string, limit = 50) {
     }
   }
   const remaining = await db
-    .prepare("SELECT COUNT(*) count FROM transactions t LEFT JOIN transaction_reviews r ON r.user_id=t.user_id AND r.transaction_id=t.id WHERE t.user_id=? AND t.source='manual' AND r.transaction_id IS NULL")
+    .prepare(
+      "SELECT COUNT(*) count FROM transactions t LEFT JOIN transaction_reviews r ON r.user_id=t.user_id AND r.transaction_id=t.id WHERE t.user_id=? AND t.source='manual' AND r.transaction_id IS NULL",
+    )
     .bind(userId)
     .first<{ count: number }>();
-  return { seeded, remaining: remaining?.count || 0, complete: !remaining?.count };
+  return {
+    seeded,
+    remaining: remaining?.count || 0,
+    complete: !remaining?.count,
+  };
 }

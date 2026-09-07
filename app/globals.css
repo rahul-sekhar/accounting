@@ -494,7 +494,7 @@ main {
 }
 .analysis-grid {
   display: grid;
-  grid-template-columns: 1.65fr 1fr;
+  grid-template-columns: 1fr;
   gap: 18px;
 }
 .spending-panel {
@@ -573,31 +573,6 @@ main {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.ai-panel {
-  background: #eaf1ff;
-  border: 1px solid #d3e2fc;
-  border-radius: 12px;
-  padding: 25px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 14px;
-}
-.ai-panel h3 {
-  font-size: 19px;
-  letter-spacing: -0.5px;
-}
-.ai-panel p {
-  font-size: 14px;
-  line-height: 1.65;
-  color: #506782;
-}
-.ai-icon {
-  color: #145bdf;
-}
-.ai-panel .subtle {
-  font-size: 12px;
-}
 .review-link {
   border: 0;
   background: transparent;
@@ -657,6 +632,50 @@ main {
 }
 .transaction-heading .field {
   min-width: 160px;
+}
+.bulk-toolbar {
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--border);
+  background: #f5f8fc;
+}
+.bulk-toolbar-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.bulk-toolbar-main strong {
+  font-size: 14px;
+}
+.bulk-toolbar-main .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.bulk-spacer {
+  flex: 1;
+}
+.bulk-progress {
+  display: grid;
+  grid-template-columns: minmax(140px, 260px) auto;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 12px;
+  color: #52657c;
+  font-size: 13px;
+}
+.bulk-progress > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bulk-progress .bulk-error {
+  grid-column: 1 / -1;
+  color: #b42318;
+}
+.selection-cell {
+  width: 48px;
+  padding-right: 4px !important;
 }
 table th {
   font-size: 12px !important;
@@ -1175,19 +1194,6 @@ table td {
   .analysis-grid {
     grid-template-columns: 1fr;
   }
-  .ai-panel {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    column-gap: 18px;
-  }
-  .ai-panel h3 {
-    align-self: center;
-  }
-  .ai-panel p,
-  .ai-panel > button,
-  .ai-panel > .subtle {
-    grid-column: 2;
-  }
   .analysis-header {
     align-items: flex-start;
     flex-direction: column;
@@ -1234,6 +1240,17 @@ table td {
   }
   .transaction-heading .field {
     width: 100%;
+  }
+  .bulk-toolbar-main {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .bulk-toolbar-main .danger,
+  .bulk-toolbar-main .secondary {
+    width: 100%;
+  }
+  .bulk-progress {
+    grid-template-columns: 1fr;
   }
   .account-card {
     padding: 20px;

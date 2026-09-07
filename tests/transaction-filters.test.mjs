@@ -6,7 +6,7 @@ const accounts = [
   { id: 'active', bank: 'One', name: 'Daily', type: 'Chequing', currency: 'CAD', archived: false },
   { id: 'archived', bank: 'Two', name: 'Old', type: 'Credit', currency: 'USD', archived: true },
 ];
-const base = { source: 'none', confidence: null, category_revision: 0, reviewed_at: null, memory_enabled: null, categorization_evidence: null };
+const base = { source: 'none', confidence: null, category_revision: 0, reviewed_at: null, has_review: false, memory_enabled: null, categorization_evidence: null };
 const rows = [
   { ...base, id: 'a', account_id: 'active', import_id: 'imp', date: '2026-01-01', description: 'Coffee (shop)', sub_description: 'Terminal #4', amount: -1234, category: 'Food' },
   { ...base, id: 'b', account_id: 'active', import_id: 'imp', date: '2026-01-31', description: 'Refund', sub_description: '', amount: 1234, category: 'Food' },
