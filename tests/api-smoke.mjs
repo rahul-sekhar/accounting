@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-const base = 'http://localhost:3000';
+const base = process.env.BASE_URL || 'http://localhost:3000';
 const sign = await fetch(base + '/signin-with-chatgpt?return_to=%2F', {
   redirect: 'manual',
 });
@@ -12,7 +12,7 @@ async function req(path, method = 'GET', data, auth = true, origin = base) {
       ...(auth ? { cookie } : {}),
       ...(data ? { 'Content-Type': 'application/json', Origin: origin } : {}),
     },
-    body: data ? JSON.stringify(data) : undefined,
+    ...(data ? { body: JSON.stringify(data) } : {}),
   });
   const raw = await r.text();
   let result;
@@ -40,7 +40,7 @@ const payload = {
   filename: 'qa-only.csv',
   mapping,
   account: {
-    bank: 'Scotiabank',
+    bank: 'Pacific Test Credit Union',
     name: 'QA disposable account',
     type: 'Chequing',
     currency: 'CAD',
@@ -51,6 +51,42 @@ assert.equal((await req('import', 'POST', payload, false)).status, 401);
 assert.equal(
   (await req('import', 'POST', payload, true, 'https://other.example')).status,
   403,
+);
+const unused = await req('account', 'POST', {
+  bank: '  任意信用組合  ',
+  name: '  QA unused  ',
+  type: 'Savings',
+  currency: 'CAD',
+});
+assert.equal(unused.status, 200, JSON.stringify(unused));
+assert.equal(unused.data.account.bank, '任意信用組合');
+assert.equal(unused.data.account.name, 'QA unused');
+const unusedId = unused.data.account.id;
+const unusedUpdate = await req('account', 'PATCH', {
+  id: unusedId,
+  action: 'update',
+  bank: 'Another Institution',
+  name: 'Unused renamed',
+  type: 'Investment',
+  currency: 'USD',
+});
+assert.equal(unusedUpdate.status, 200, JSON.stringify(unusedUpdate));
+assert.equal(unusedUpdate.data.account.currency, 'USD');
+assert.equal((await req('account', 'DELETE', { id: unusedId })).status, 200);
+assert.equal(
+  (await req('account', 'DELETE', { id: 'someone-elses-id' })).status,
+  404,
+);
+assert.equal(
+  (
+    await req('account', 'POST', {
+      bank: ' ',
+      name: 'Bad',
+      type: 'Chequing',
+      currency: 'CAD',
+    })
+  ).status,
+  400,
 );
 const first = await req('import', 'POST', payload);
 assert.equal(first.status, 200, JSON.stringify(first));
@@ -64,6 +100,45 @@ assert.equal(all.status, 200);
 const rows = all.data.transactions.filter((t) => t.account_id === accountId);
 assert.equal(rows.length, 3);
 assert.equal(rows.filter((t) => t.description === 'QA BUS').length, 2);
+const renamed = await req('account', 'PATCH', {
+  id: accountId,
+  action: 'update',
+  bank: 'Pacific Test Credit Union',
+  name: 'QA renamed account',
+  type: 'Chequing',
+  currency: 'CAD',
+});
+assert.equal(renamed.status, 200, JSON.stringify(renamed));
+assert.equal(
+  (
+    await req('account', 'PATCH', {
+      id: accountId,
+      action: 'update',
+      bank: 'Pacific Test Credit Union',
+      name: 'QA renamed account',
+      type: 'Savings',
+      currency: 'CAD',
+    })
+  ).status,
+  409,
+);
+assert.equal(
+  (await req('account', 'PATCH', { id: accountId, action: 'archive' })).status,
+  200,
+);
+assert.equal(
+  (await req('account', 'PATCH', { id: accountId, action: 'archive' })).status,
+  200,
+);
+assert.equal(
+  (await req('import', 'POST', { ...payload, accountId })).status,
+  409,
+);
+assert.equal(
+  (await req('account', 'PATCH', { id: accountId, action: 'restore' })).status,
+  200,
+);
+assert.equal((await req('account', 'DELETE', { id: accountId })).status, 409);
 const reviewOperationId = crypto.randomUUID();
 const reviewPayload = {
   id: rows[0].id,
@@ -113,13 +188,15 @@ assert.equal(
   0,
 );
 assert.equal(
-  (await req('category', 'PATCH', {
-    id: rows[0].id,
-    category: 'Invalid',
-    action: 'correct',
-    operationId: crypto.randomUUID(),
-    expectedRevision: memoryOff.data.categoryRevision,
-  })).status,
+  (
+    await req('category', 'PATCH', {
+      id: rows[0].id,
+      category: 'Invalid',
+      action: 'correct',
+      operationId: crypto.randomUUID(),
+      expectedRevision: memoryOff.data.categoryRevision,
+    })
+  ).status,
   400,
 );
 assert.equal(
@@ -142,10 +219,18 @@ assert.equal(
       balanceDate: '2026-08-31',
     })
   ).status,
-  200,
+  400,
 );
 all = await req('data');
-assert.equal(all.data.accounts.find((a) => a.id === accountId).balance, 54321);
+assert.equal(
+  all.data.accounts.find((a) => a.id === accountId).name,
+  'QA renamed account',
+);
+assert.equal(all.data.accounts.find((a) => a.id === accountId).archived, false);
+assert.equal(
+  all.data.transactions.filter((t) => t.account_id === accountId).length,
+  3,
+);
 assert.equal(
   all.data.transactions.find((t) => t.id === rows[0].id).source,
   'manual',
@@ -181,6 +266,6 @@ if (!all.data.aiReady)
     503,
   );
 console.log(
-  'PASS: sign-in, CSV import, repeat import, legitimate duplicates, persisted edits and balances, rejected invalid rows and currency, unauthenticated and cross-origin requests.',
+  'PASS: sign-in, generic account lifecycle, CSV import, repeat import, legitimate duplicates, protected history, rejected invalid rows and currency, unauthenticated and cross-origin requests.',
 );
 console.log('QA account ID: ' + accountId);

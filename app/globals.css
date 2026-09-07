@@ -209,35 +209,19 @@ main {
 }
 .overview-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 18px;
 }
-.balance-panel {
-  padding: 27px 28px;
-  background: #142d48;
-  color: #fff;
-  border-radius: 14px;
-}
-.balance-panel > p,
 .metric > p {
   font-size: 14px;
   font-weight: 500;
 }
-.balance-panel h2,
 .metric h2 {
   font-size: 38px;
   font-weight: 500;
   margin: 18px 0;
   letter-spacing: -1.7px;
   font-variant-numeric: tabular-nums;
-}
-.balance-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #aac4e5;
-  font-size: 13px;
-  gap: 10px;
 }
 .metric {
   background: #fff;
@@ -255,12 +239,12 @@ main {
   gap: 16px;
   margin-bottom: 17px;
 }
-.bank-grid {
+.account-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
 }
-.bank-card {
+.account-empty {
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -269,27 +253,21 @@ main {
   align-items: center;
   gap: 16px;
 }
-.bank-card p {
-  margin-top: 5px;
+.account-empty div {
+  flex: 1;
 }
-.bank-icon {
+.account-empty p {
+  margin-top: 4px;
+}
+.institution-icon {
   height: 44px;
   width: 44px;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  font-weight: 650;
-  font-size: 22px;
   flex-shrink: 0;
-}
-.scotia {
-  background: #fff0f2;
-  color: #d32b42;
-}
-.wealth {
-  background: #eceef0;
-  color: #202c31;
-  font-family: Georgia, serif;
+  color: #145bdf;
+  background: #eaf1ff;
 }
 .empty-panel {
   background: #fff;
@@ -320,10 +298,7 @@ main {
   .overview-grid {
     grid-template-columns: 1fr 1fr;
   }
-  .balance-panel {
-    grid-column: 1/-1;
-  }
-  .bank-grid {
+  .account-grid {
     grid-template-columns: 1fr;
   }
   .privacy {
@@ -430,6 +405,9 @@ main {
   border: 1px solid var(--border);
   border-radius: 12px;
 }
+.account-card.archived {
+  background: #f7f9fc;
+}
 .account-top {
   display: flex;
   align-items: center;
@@ -446,16 +424,28 @@ main {
   font-size: 12px;
   padding: 4px 7px;
 }
-.account-balance {
+.account-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
   margin-top: 23px;
 }
-.account-balance strong {
-  font-size: 24px;
-  font-weight: 500;
-  letter-spacing: -0.7px;
+.active-badge,
+.archived-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.active-badge {
+  background: #e7f8f3;
+  color: #087f6e;
+}
+.archived-badge {
+  background: #e7edf5;
+  color: #53657b;
 }
 .icon-button {
   display: inline-flex;
@@ -917,11 +907,59 @@ table td {
   font-size: 14px;
   min-height: 44px;
 }
-.balance-dialog {
+.account-dialog,
+.confirm-dialog {
   width: 460px;
   max-width: calc(100vw - 32px) !important;
   padding: 26px !important;
   gap: 20px !important;
+}
+.account-fields {
+  margin-top: 2px;
+}
+.field-note {
+  grid-column: 1 / -1;
+  color: #617187;
+  font-size: 13px;
+}
+.account-dialog-actions {
+  align-items: center;
+}
+.dialog-spacer {
+  flex: 1;
+}
+.danger,
+.danger-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 10px 15px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.danger {
+  border: 0;
+  color: #fff;
+  background: #b42318;
+}
+.danger-ghost {
+  border: 0;
+  color: #b42318;
+  background: transparent;
+}
+.delete-confirm {
+  border: 1px solid #f3b7b2;
+  background: #fff3f2;
+  border-radius: 9px;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
 }
 .spin {
   animation: spin 1s linear infinite;
@@ -1028,7 +1066,8 @@ table td {
   .dialog-title {
     font-size: 20px !important;
   }
-  .balance-dialog {
+  .account-dialog,
+  .confirm-dialog {
     padding: 22px !important;
   }
   .ai-panel {
@@ -1039,9 +1078,6 @@ table td {
   }
   .page-footer {
     line-height: 1.6;
-  }
-  .balance-panel h2 {
-    font-size: 34px;
   }
   .metric h2 {
     font-size: 26px;

@@ -11,7 +11,7 @@ async function req(path, method = 'GET', payload, auth = true) {
       ...(auth ? { cookie } : {}),
       ...(payload ? { 'Content-Type': 'application/json', Origin: base } : {}),
     },
-    body: payload ? JSON.stringify(payload) : undefined,
+    ...(payload ? { body: JSON.stringify(payload) } : {}),
   });
   return { status: r.status, data: await r.json() };
 }

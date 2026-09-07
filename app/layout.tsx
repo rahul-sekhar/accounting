@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Account View — Your banking overview',
+  title: 'Account View — Your transaction overview',
   description:
-    'A private view of your Scotiabank and Wealthsimple accounts and categorized transactions.',
+    'A private view of accounts from any institution and their categorized transactions.',
 };
 
 export default function RootLayout({

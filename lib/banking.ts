@@ -53,8 +53,7 @@ export type Account = {
   name: string;
   type: string;
   currency: string;
-  balance: number | null;
-  balance_date: string | null;
+  archived: boolean;
 };
 export type Transaction = {
   id: string;
@@ -115,7 +114,12 @@ export type ParsedTransaction = {
   amount: number;
   occurrence: number;
 };
-export function needsReview(transaction: Pick<Transaction, 'category' | 'source' | 'confidence' | 'reviewed_at'>) {
+export function needsReview(
+  transaction: Pick<
+    Transaction,
+    'category' | 'source' | 'confidence' | 'reviewed_at'
+  >,
+) {
   if (transaction.category === 'Uncategorized') return true;
   if (transaction.reviewed_at) return false;
   return transaction.source === 'ai' && transaction.confidence !== 'high';

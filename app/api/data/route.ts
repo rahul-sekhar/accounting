@@ -10,7 +10,7 @@ export async function GET() {
     const [accounts, transactions, imports] = await db.batch([
       db
         .prepare(
-          'SELECT id,bank,name,type,currency,balance,balance_date FROM accounts WHERE user_id=? ORDER BY created_at',
+          'SELECT id,bank,name,type,currency,archived FROM accounts WHERE user_id=? ORDER BY archived,created_at',
         )
         .bind(user.userId),
       db
@@ -25,7 +25,12 @@ export async function GET() {
         .bind(user.userId),
     ]);
     return json({
-      accounts: accounts.results,
+      accounts: (accounts.results as Array<Record<string, unknown>>).map(
+        (account) => ({
+          ...account,
+          archived: Boolean(account.archived),
+        }),
+      ),
       transactions: transactions.results,
       imports: imports.results,
       categories: await getCategories(user.userId),

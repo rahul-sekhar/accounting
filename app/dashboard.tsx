@@ -1,11 +1,10 @@
 'use client';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import {
   WalletCards,
   Upload,
-  ArrowUpRight,
   ShieldCheck,
-  Plus,
   FileSpreadsheet,
   Sparkles,
   ArrowDownLeft,
@@ -14,7 +13,6 @@ import {
   LoaderCircle,
   ChevronLeft,
   ChevronRight,
-  Pencil,
   ArrowRight,
   LockKeyhole,
   MoreHorizontal,
@@ -27,6 +25,11 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import CategoryManager from './category-manager';
+import AccountManager, {
+  AccountFields,
+  EMPTY_ACCOUNT,
+  type AccountDraft,
+} from './account-manager';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +62,6 @@ import {
   parseCsv,
   suggestMapping,
   mapTransactions,
-  parseMoney,
   money,
   summary,
   type AppData,
@@ -87,7 +89,7 @@ async function api<T = Record<string, unknown>>(
   const r = await fetch(`/api/${path}`, {
     method,
     headers: payload ? { 'Content-Type': 'application/json' } : undefined,
-    body: payload ? JSON.stringify(payload) : undefined,
+    ...(payload ? { body: JSON.stringify(payload) } : {}),
   });
   let result;
   try {
@@ -141,19 +143,12 @@ export default function Dashboard() {
     [mapping, setMapping] = useState<Mapping | null>(null),
     [importError, setImportError] = useState('');
   const [target, setTarget] = useState('new'),
-    [bank, setBank] = useState('Scotiabank'),
-    [accountName, setAccountName] = useState(''),
-    [accountType, setAccountType] = useState('Chequing'),
-    [newCurrency, setNewCurrency] = useState('CAD');
+    [accountDraft, setAccountDraft] = useState<AccountDraft>(EMPTY_ACCOUNT);
   const [currency, setCurrency] = useState('CAD'),
     [accountFilter, setAccountFilter] = useState('all'),
     [month, setMonth] = useState('all'),
     [categoryFilter, setCategoryFilter] = useState('all'),
     [page, setPage] = useState(0);
-  const [editAccount, setEditAccount] = useState<Account | null>(null),
-    [balanceInput, setBalanceInput] = useState(''),
-    [balanceDate, setBalanceDate] = useState(''),
-    [balanceError, setBalanceError] = useState('');
   const [aiConfirm, setAiConfirm] = useState(false);
   const [manageCategories, setManageCategories] = useState(false);
   const pendingReviewOperations = useRef(new Map<string, string>());
@@ -188,8 +183,8 @@ export default function Dashboard() {
       }>('map-csv', 'POST', {
         headers: parsed.headers,
         rows: parsed.rows.slice(0, 5).map((r) => r.map((c) => c.slice(0, 500))),
-        bank: selected?.bank || bank,
-        accountType: selected?.type || accountType,
+        bank: selected?.bank || accountDraft.bank,
+        accountType: selected?.type || accountDraft.type,
       });
       if (mappingRun.current !== run) return;
       setMapping(result.mapping);
@@ -211,13 +206,20 @@ export default function Dashboard() {
     return result as AppData;
   }, []);
   useEffect(() => {
-    refresh()
-      .then(async () => {
-        const result = await api<{ seeded: number }>('review-memory', 'POST', { limit: 50 });
-        if (result.seeded) await refresh();
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+    const timer = window.setTimeout(() => {
+      void refresh()
+        .then(async () => {
+          const result = await api<{ seeded: number }>(
+            'review-memory',
+            'POST',
+            { limit: 50 },
+          );
+          if (result.seeded) await refresh();
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setLoading(false));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refresh]);
   const preview = useMemo(
     () => (csv && mapping ? mapTransactions(csv, mapping) : null),
@@ -244,9 +246,7 @@ export default function Dashboard() {
         ? needsReview(t)
         : t.category === categoryFilter),
   );
-  const totals = summary(scoped, data.categories),
-    hasBalances = accounts.some((a) => a.balance !== null),
-    balance = accounts.reduce((n, a) => n + (a.balance || 0), 0);
+  const totals = summary(scoped, data.categories);
   const uncategorized = data.transactions.filter((t) => t.source === 'none'),
     reviewCount = scoped.filter(needsReview).length;
   const spending = data.categories
@@ -281,7 +281,10 @@ export default function Dashboard() {
       return `${colors[i % colors.length]} ${start}% ${start + (s.amount / spendingTotal) * 100}%`;
     })
     .join(',');
-  useEffect(() => setPage(0), [currency, accountFilter, month, categoryFilter]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPage(0), 0);
+    return () => window.clearTimeout(timer);
+  }, [currency, accountFilter, month, categoryFilter]);
   async function reviewTransaction(
     transaction: Transaction,
     category: Category,
@@ -291,7 +294,8 @@ export default function Dashboard() {
     setError('');
     setBusy('category');
     const operationKey = `${transaction.id}:${category}:${action}:${learn}:${transaction.category_revision}`;
-    const operationId = pendingReviewOperations.current.get(operationKey) || crypto.randomUUID();
+    const operationId =
+      pendingReviewOperations.current.get(operationKey) || crypto.randomUUID();
     pendingReviewOperations.current.set(operationKey, operationId);
     try {
       const saved = await api<{
@@ -318,7 +322,10 @@ export default function Dashboard() {
                 ...t,
                 category: saved.category,
                 source: saved.source ?? t.source,
-                confidence: saved.confidence === undefined ? t.confidence : saved.confidence,
+                confidence:
+                  saved.confidence === undefined
+                    ? t.confidence
+                    : saved.confidence,
                 category_revision: saved.categoryRevision,
                 reviewed_at: saved.reviewedAt,
                 memory_enabled: saved.memoryEnabled ? 1 : 0,
@@ -333,7 +340,8 @@ export default function Dashboard() {
       setNotice('Category accepted and available for future categorization.');
     } catch (e) {
       setError((e as Error).message);
-      if ((e as Error).message.includes('changed')) await refresh().catch(() => undefined);
+      if ((e as Error).message.includes('changed'))
+        await refresh().catch(() => undefined);
     } finally {
       setBusy('');
     }
@@ -356,9 +364,9 @@ export default function Dashboard() {
         ctx.registerTool(
           {
             name: 'start_bank_csv_import',
-            title: 'Start bank CSV import',
+            title: 'Start account CSV import',
             description:
-              'Open the bank CSV import dialog. Does not upload or save any data. The user chooses a file and reviews it before saving.',
+              'Open the account CSV import dialog. Does not upload or save any data. The user chooses a file and reviews it before saving.',
             inputSchema: {
               type: 'object',
               properties: {},
@@ -392,7 +400,7 @@ export default function Dashboard() {
     setMapping(null);
     if (!file) return;
     if (!/\.csv$/i.test(file.name)) {
-      setImportError('Choose a .csv export from your bank.');
+      setImportError('Choose a .csv transaction export.');
       return;
     }
     if (file.size > 5_000_000) {
@@ -422,10 +430,18 @@ export default function Dashboard() {
     setMapping(null);
     setRaw('');
     setFilename('');
-    setAccountName('');
+    setAccountDraft(
+      account
+        ? {
+            bank: account.bank,
+            name: '',
+            type: account.type,
+            currency: account.currency,
+          }
+        : EMPTY_ACCOUNT,
+    );
     if (account) {
-      setBank(account.bank);
-      setNewCurrency(account.currency);
+      setCurrency(account.currency);
     }
     setShowImport(true);
   }
@@ -442,10 +458,7 @@ export default function Dashboard() {
           mapping,
           accountId: target === 'new' ? null : target,
           account: {
-            bank,
-            name: accountName,
-            type: accountType,
-            currency: newCurrency,
+            ...accountDraft,
           },
         },
       );
@@ -456,7 +469,7 @@ export default function Dashboard() {
       setShowImport(false);
       setCurrency(
         target === 'new'
-          ? newCurrency
+          ? accountDraft.currency
           : data.accounts.find((a) => a.id === target)?.currency || 'CAD',
       );
       setAccountFilter('all');
@@ -499,41 +512,12 @@ export default function Dashboard() {
       setBusy('');
     }
   }
-  function startBalance(a: Account) {
-    setEditAccount(a);
-    setBalanceInput(a.balance === null ? '' : (a.balance / 100).toFixed(2));
-    setBalanceDate(a.balance_date || new Date().toISOString().slice(0, 10));
-    setBalanceError('');
-  }
-  async function saveBalance() {
-    setBalanceError('');
-    const value = parseMoney(balanceInput);
-    if (value === null) {
-      setBalanceError('Enter a valid balance, such as 1250.00 or -350.00.');
-      return;
-    }
-    setBusy('balance');
-    try {
-      await api('account', 'PATCH', {
-        id: editAccount?.id,
-        balance: value,
-        balanceDate,
-      });
-      await refresh();
-      setEditAccount(null);
-      setNotice('Account balance updated.');
-    } catch (e) {
-      setBalanceError((e as Error).message);
-    } finally {
-      setBusy('');
-    }
-  }
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="/">
+        <Link className="brand" href="/">
           <WalletCards size={26} /> account<span>view</span>
-        </a>
+        </Link>
         <div className="top-right">
           <button
             className="text-button"
@@ -545,6 +529,7 @@ export default function Dashboard() {
           <span className="privacy">
             <ShieldCheck size={16} /> Private workspace
           </span>
+          {/* oxlint-disable-next-line next/no-html-link-for-pages -- auth requires a top-level navigation */}
           <a
             className="signout"
             href="/signout-with-chatgpt?return_to=%2F"
@@ -557,8 +542,8 @@ export default function Dashboard() {
       <main>
         <div className="page-heading">
           <div>
-            <p className="eyebrow">SCOTIABANK + WEALTHSIMPLE</p>
-            <h1>Your money, together.</h1>
+            <p className="eyebrow">YOUR TRANSACTION WORKSPACE</p>
+            <h1>Every account, one clear view.</h1>
             <p className="subtle">
               An account overview, with every transaction in its place.
             </p>
@@ -588,7 +573,7 @@ export default function Dashboard() {
           </div>
         )}
         {notice && (
-          <div className="message success" role="status">
+          <output className="message success">
             <CheckCircle2 size={18} />
             {notice}
             <button
@@ -597,7 +582,7 @@ export default function Dashboard() {
             >
               ×
             </button>
-          </div>
+          </output>
         )}
         <div className="overview-toolbar">
           <span className="eyebrow">ACCOUNT OVERVIEW</span>
@@ -612,126 +597,50 @@ export default function Dashboard() {
             options={opts(['CAD', 'USD'])}
           />
         </div>
-        <div className="overview-grid">
-          <section className="balance-panel">
-            <p>Recorded account balances · {currency}</p>
-            <h2>
-              {loading ? '…' : hasBalances ? money(balance, currency) : '—'}
-            </h2>
-            <div className="balance-footer">
-              <span>
-                {hasBalances
-                  ? `${accounts.filter((a) => a.balance !== null).length} of ${accounts.length} accounts have a balance snapshot`
-                  : 'Add statement balances to see the full picture'}
-              </span>
-              <ArrowUpRight size={23} />
-            </div>
-          </section>
+        <div className="overview-grid flow-overview">
           <section className="metric">
             <p>
-              <ArrowDownLeft size={16} /> Income
+              <ArrowDownLeft size={16} /> Transaction income
             </p>
             <h2 className="income">
               {loading ? '…' : money(totals.income, currency)}
             </h2>
             <span className="subtle">
               {month === 'all' ? 'All imported dates' : month} · selected
-              accounts
+              accounts · transaction flow
             </span>
           </section>
           <section className="metric">
             <p>
-              <Outgoing size={16} /> Net spending
+              <Outgoing size={16} /> Transaction spending
             </p>
             <h2>{loading ? '…' : money(totals.spending, currency)}</h2>
-            <span className="subtle">Transfers & investments excluded</span>
+            <span className="subtle">
+              Transaction flow · transfers & investments excluded
+            </span>
           </section>
         </div>
-        <section className="section">
-          <div className="section-heading">
-            <h2>
-              Your accounts <span className="count">{accounts.length}</span>
-            </h2>
-            <button
-              className="text-button"
-              onClick={() => startImport()}
-              disabled={!!busy}
-            >
-              <Plus size={16} /> Add account
-            </button>
-          </div>
-          <div className="bank-grid">
-            {accounts.length
-              ? accounts.map((a) => (
-                  <article className="account-card" key={a.id}>
-                    <div className="account-top">
-                      <span
-                        className={
-                          'bank-icon ' +
-                          (a.bank === 'Scotiabank' ? 'scotia' : 'wealth')
-                        }
-                      >
-                        {a.bank === 'Scotiabank' ? 'S' : 'W'}
-                      </span>
-                      <div>
-                        <p className="subtle">{a.bank}</p>
-                        <h3>{a.name}</h3>
-                      </div>
-                      <span className="account-type">{a.type}</span>
-                    </div>
-                    <div className="account-balance">
-                      <strong>
-                        {a.balance === null
-                          ? 'No balance added'
-                          : money(a.balance, a.currency)}
-                      </strong>
-                      <button
-                        className="icon-button"
-                        aria-label={`Edit ${a.name} balance`}
-                        onClick={() => startBalance(a)}
-                      >
-                        <Pencil size={15} />
-                      </button>
-                    </div>
-                    <div className="account-bottom">
-                      <span>
-                        {a.balance_date
-                          ? `Snapshot · ${a.balance_date}`
-                          : 'Transaction exports may omit balances'}
-                      </span>
-                      <button
-                        className="text-button"
-                        onClick={() => startImport(a)}
-                        disabled={!!busy}
-                      >
-                        Import <ArrowRight size={14} />
-                      </button>
-                    </div>
-                  </article>
-                ))
-              : ['Scotiabank', 'Wealthsimple'].map((b, i) => (
-                  <div key={b} className="bank-card">
-                    <span className={'bank-icon ' + (i ? 'wealth' : 'scotia')}>
-                      {i ? 'W' : 'S'}
-                    </span>
-                    <div>
-                      <h3>{b}</h3>
-                      <p className="subtle">
-                        {loading
-                          ? 'Loading your accounts…'
-                          : 'No accounts imported yet'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-          </div>
-        </section>
+        <AccountManager
+          accounts={data.accounts}
+          transactionAccountIds={
+            new Set([
+              ...data.transactions.map((transaction) => transaction.account_id),
+              ...data.imports.map((record) => record.account_id),
+            ])
+          }
+          busy={loading || !!busy}
+          request={(method, payload) => api('account', method, payload)}
+          onChanged={refresh}
+          onImport={startImport}
+          onNotice={setNotice}
+          onError={setError}
+        />
         {!loading && !data.transactions.length ? (
           <Empty className="empty-panel">
             <EmptyHeader>
               <Upload size={30} />
               <EmptyTitle className="empty-title">
-                Start with a bank export
+                Start with a transaction export
               </EmptyTitle>
               <EmptyDescription>
                 Upload a CSV to bring your accounts and transactions into view.
@@ -785,19 +694,18 @@ export default function Dashboard() {
                   </div>
                   {spending.length ? (
                     <div className="spending-content">
-                      <div
+                      <figure
                         className="donut"
                         style={{
                           background: `conic-gradient(${chartSegments})`,
                         }}
-                        role="img"
                         aria-label="Spending by category, detailed in the adjacent list"
                       >
                         <div>
-                          <span>Net outflow</span>
+                          <span>Transaction outflow</span>
                           <strong>{money(spendingTotal, currency)}</strong>
                         </div>
-                      </div>
+                      </figure>
                       <div className="legend">
                         {spending.slice(0, 5).map((s, i) => (
                           <button
@@ -938,7 +846,9 @@ export default function Dashboard() {
                               }}
                             >
                               {data.categories
-                                .filter((c) => !c.archived || c.id === t.category)
+                                .filter(
+                                  (c) => !c.archived || c.id === t.category,
+                                )
                                 .map((c) => (
                                   <option key={c.id} value={c.id}>
                                     {c.name}
@@ -952,7 +862,9 @@ export default function Dashboard() {
                                   <TooltipTrigger
                                     className={
                                       'ai-status-icon ' +
-                                      (t.confidence === 'high' ? '' : 'needs-review')
+                                      (t.confidence === 'high'
+                                        ? ''
+                                        : 'needs-review')
                                     }
                                     aria-label={
                                       t.confidence === 'high'
@@ -973,10 +885,15 @@ export default function Dashboard() {
                             {t.source === 'manual' && (
                               <TooltipProvider>
                                 <Tooltip>
-                                  <TooltipTrigger className="reviewed-icon" aria-label="Reviewed category">
+                                  <TooltipTrigger
+                                    className="reviewed-icon"
+                                    aria-label="Reviewed category"
+                                  >
                                     <CheckCircle2 size={15} />
                                   </TooltipTrigger>
-                                  <TooltipContent>Reviewed category</TooltipContent>
+                                  <TooltipContent>
+                                    Reviewed category
+                                  </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
                             )}
@@ -988,10 +905,18 @@ export default function Dashboard() {
                               >
                                 <MoreHorizontal size={17} />
                               </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="row-actions-menu">
+                              <DropdownMenuContent
+                                align="end"
+                                className="row-actions-menu"
+                              >
                                 <DropdownMenuItem
                                   onClick={() =>
-                                    void reviewTransaction(t, t.category, 'confirm', true)
+                                    void reviewTransaction(
+                                      t,
+                                      t.category,
+                                      'confirm',
+                                      true,
+                                    )
                                   }
                                 >
                                   <CheckCircle2 /> Accept category
@@ -999,23 +924,35 @@ export default function Dashboard() {
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
-                          {t.source === 'ai' && t.categorization_evidence && (() => {
-                            let evidence: CategorizationEvidence[] = [];
-                            try {
-                              evidence = JSON.parse(t.categorization_evidence);
-                            } catch {}
-                            return evidence.length ? (
-                              <details className="ai-evidence">
-                                <summary>AI cited your previous reviews</summary>
-                                {evidence.map((item) => (
-                                  <p key={item.memoryId}>
-                                    {item.description}{item.subDescription ? ` · ${item.subDescription}` : ''} → {item.categoryName}
-                                    {item.reviewedTransactionCount > 1 ? ` (${item.reviewedTransactionCount} reviews)` : ''}
-                                  </p>
-                                ))}
-                              </details>
-                            ) : null;
-                          })()}
+                          {t.source === 'ai' &&
+                            t.categorization_evidence &&
+                            (() => {
+                              let evidence: CategorizationEvidence[] = [];
+                              try {
+                                evidence = JSON.parse(
+                                  t.categorization_evidence,
+                                );
+                              } catch {}
+                              return evidence.length ? (
+                                <details className="ai-evidence">
+                                  <summary>
+                                    AI cited your previous reviews
+                                  </summary>
+                                  {evidence.map((item) => (
+                                    <p key={item.memoryId}>
+                                      {item.description}
+                                      {item.subDescription
+                                        ? ` · ${item.subDescription}`
+                                        : ''}{' '}
+                                      → {item.categoryName}
+                                      {item.reviewedTransactionCount > 1
+                                        ? ` (${item.reviewedTransactionCount} reviews)`
+                                        : ''}
+                                    </p>
+                                  ))}
+                                </details>
+                              ) : null;
+                            })()}
                         </div>
                       </TableCell>
                       <TableCell
@@ -1087,8 +1024,8 @@ export default function Dashboard() {
         <footer className="page-footer">
           <ShieldCheck size={14} />
           <span>
-            Private to your signed-in account. Bank connections are manual CSV
-            imports.
+            Private to your signed-in account. Transactions are added with
+            manual CSV imports.
           </span>
         </footer>
       </main>
@@ -1107,7 +1044,7 @@ export default function Dashboard() {
         <DialogContent className="import-dialog">
           <DialogHeader>
             <DialogTitle className="dialog-title">
-              Import bank transactions
+              Import transactions
             </DialogTitle>
             <DialogDescription>
               Choose one account per CSV. Review the preview, then save to your
@@ -1121,66 +1058,28 @@ export default function Dashboard() {
               onChange={setTarget}
               options={[
                 { value: 'new', label: 'Create a new account' },
-                ...data.accounts.map((a) => ({
-                  value: a.id,
-                  label: `${a.bank} · ${a.name} (${a.currency})`,
-                })),
+                ...data.accounts
+                  .filter((a) => !a.archived)
+                  .map((a) => ({
+                    value: a.id,
+                    label: `${a.bank} · ${a.name} (${a.currency})`,
+                  })),
               ]}
             />
             {target === 'new' && (
-              <div className="form-grid">
-                <Picker
-                  label="Bank"
-                  value={bank}
-                  onChange={setBank}
-                  options={opts(['Scotiabank', 'Wealthsimple'])}
-                />
-                <label className="field">
-                  <span>Account nickname</span>
-                  <input
-                    placeholder="e.g. Everyday chequing"
-                    maxLength={80}
-                    value={accountName}
-                    onChange={(e) => setAccountName(e.target.value)}
-                  />
-                </label>
-                <Picker
-                  label="Account type"
-                  value={accountType}
-                  onChange={setAccountType}
-                  options={opts([
-                    'Chequing',
-                    'Savings',
-                    'Credit card',
-                    'Investment',
-                  ])}
-                />
-                <Picker
-                  label="Account currency"
-                  value={newCurrency}
-                  onChange={setNewCurrency}
-                  options={opts(['CAD', 'USD'])}
-                />
-              </div>
+              <AccountFields value={accountDraft} onChange={setAccountDraft} />
             )}
-            <label
-              className="upload-zone"
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                loadFile(e.dataTransfer.files[0]);
-              }}
-            >
+            <label className="upload-zone">
               <FileSpreadsheet size={28} />
-              <strong>{filename || 'Choose or drop a CSV export'}</strong>
-              <span>Scotiabank or Wealthsimple · up to 2,000 rows · 5 MB</span>
+              <strong>{filename || 'Choose a CSV export'}</strong>
+              <span>CSV from any institution · up to 2,000 rows · 5 MB</span>
               <span>
                 AI uses headers and up to five sample rows to suggest a mapping.
               </span>
               <input
                 type="file"
                 accept=".csv,text/csv"
-                onChange={(e) => loadFile(e.target.files?.[0])}
+                onChange={(e) => void loadFile(e.target.files?.[0])}
                 disabled={!!busy}
               />
             </label>
@@ -1191,7 +1090,7 @@ export default function Dashboard() {
                   <button
                     className="text-button"
                     disabled={mappingBusy || !data.aiReady}
-                    onClick={() => aiMapping(csv, ++mappingRun.current)}
+                    onClick={() => void aiMapping(csv, ++mappingRun.current)}
                   >
                     <Sparkles size={14} />
                     {mappingBusy ? 'Mapping…' : 'Suggest with AI'}
@@ -1199,10 +1098,10 @@ export default function Dashboard() {
                   <span className="subtle">{csv.rows.length} rows found</span>
                 </div>
                 {mappingNote && (
-                  <p className="mapping-status" role="status">
+                  <output className="mapping-status">
                     {mappingBusy && <LoaderCircle size={15} className="spin" />}
                     {mappingNote}
-                  </p>
+                  </output>
                 )}
                 <div className="form-grid">
                   {(['date', 'description', 'subDescription'] as const).map(
@@ -1341,7 +1240,7 @@ export default function Dashboard() {
                           {money(
                             t.amount,
                             target === 'new'
-                              ? newCurrency
+                              ? accountDraft.currency
                               : data.accounts.find((a) => a.id === target)
                                   ?.currency,
                           )}
@@ -1384,7 +1283,8 @@ export default function Dashboard() {
                 mappingBusy ||
                 !preview?.transactions.length ||
                 !!preview?.errors.length ||
-                (target === 'new' && !accountName.trim())
+                (target === 'new' &&
+                  (!accountDraft.bank.trim() || !accountDraft.name.trim()))
               }
             >
               {busy === 'import' ? (
@@ -1399,51 +1299,6 @@ export default function Dashboard() {
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={!!editAccount}
-        onOpenChange={(v) => {
-          if (!v && busy !== 'balance') setEditAccount(null);
-        }}
-      >
-        <DialogContent className="balance-dialog">
-          <DialogHeader>
-            <DialogTitle>Update account balance</DialogTitle>
-            <DialogDescription>
-              {editAccount?.name} · {editAccount?.currency}. Enter a statement
-              or current balance. Use a negative number for credit-card debt.
-            </DialogDescription>
-          </DialogHeader>
-          <label className="field">
-            <span>Balance</span>
-            <input
-              inputMode="decimal"
-              value={balanceInput}
-              onChange={(e) => setBalanceInput(e.target.value)}
-              placeholder="0.00"
-            />
-          </label>
-          <label className="field">
-            <span>Balance as of</span>
-            <input
-              type="date"
-              value={balanceDate}
-              onChange={(e) => setBalanceDate(e.target.value)}
-            />
-          </label>
-          <p className="subtle">
-            This snapshot is separate from transaction imports and won’t update
-            automatically.
-          </p>
-          {balanceError && (
-            <div className="message error" role="alert">
-              {balanceError}
-            </div>
-          )}
-          <button className="primary" disabled={!!busy} onClick={saveBalance}>
-            Save balance
-          </button>
-        </DialogContent>
-      </Dialog>
       <CategoryManager
         open={manageCategories}
         onOpenChange={setManageCategories}
@@ -1451,7 +1306,7 @@ export default function Dashboard() {
         onSaved={refresh}
       />
       <Dialog open={aiConfirm} onOpenChange={setAiConfirm}>
-        <DialogContent className="balance-dialog">
+        <DialogContent className="confirm-dialog">
           <DialogHeader>
             <DialogTitle>Suggest transaction categories</DialogTitle>
             <DialogDescription>

@@ -1,5 +1,6 @@
 import { getDb } from '@/db';
 import { parseCsv, mapTransactions, type Mapping } from '@/lib/banking';
+import { AccountInputError, parseAccountInput } from '@/lib/accounts';
 import {
   identity,
   json,
@@ -30,37 +31,46 @@ export async function POST(request: Request) {
     const now = new Date().toISOString(),
       importId = crypto.randomUUID();
     let accountId: string;
+    let accountCurrency: string;
+    let existingAccount = false;
     const statements: D1PreparedStatement[] = [];
     if (b.accountId) {
+      existingAccount = true;
       accountId = textValue(b.accountId);
       const account = await db
-        .prepare('SELECT id,currency FROM accounts WHERE id=? AND user_id=?')
+        .prepare(
+          'SELECT id,currency,archived FROM accounts WHERE id=? AND user_id=?',
+        )
         .bind(accountId, user.userId)
-        .first<{ id: string; currency: string }>();
+        .first<{ id: string; currency: string; archived: number }>();
       if (!account) throw new AppError('Account not found.', 404);
-      b.account = { currency: account.currency };
+      if (account.archived)
+        throw new AppError(
+          'Restore this account before importing into it.',
+          409,
+        );
+      accountCurrency = account.currency;
     } else {
-      const a = b.account;
-      if (
-        !a ||
-        !['Scotiabank', 'Wealthsimple'].includes(a.bank) ||
-        !['Chequing', 'Savings', 'Credit card', 'Investment'].includes(
-          a.type,
-        ) ||
-        !['CAD', 'USD'].includes(a.currency)
-      )
-        throw new AppError('Check the account details.');
+      let a;
+      try {
+        a = parseAccountInput(b.account);
+      } catch (error) {
+        if (error instanceof AccountInputError)
+          throw new AppError(error.message);
+        throw error;
+      }
       accountId = crypto.randomUUID();
+      accountCurrency = a.currency;
       statements.push(
         db
           .prepare(
-            'INSERT INTO accounts (id,user_id,bank,name,type,currency,created_at) VALUES (?,?,?,?,?,?,?)',
+            'INSERT INTO accounts (id,user_id,bank,name,type,currency,archived,created_at) VALUES (?,?,?,?,?,?,0,?)',
           )
           .bind(
             accountId,
             user.userId,
             a.bank,
-            textValue(a.name, 80),
+            a.name,
             a.type,
             a.currency,
             now,
@@ -73,7 +83,7 @@ export async function POST(request: Request) {
       csv.rows.some(
         (r) =>
           r[currencyColumn] &&
-          r[currencyColumn].toUpperCase() !== b.account.currency,
+          r[currencyColumn].toUpperCase() !== accountCurrency,
       )
     )
       throw new AppError(
@@ -113,30 +123,52 @@ export async function POST(request: Request) {
     );
     for (let i = 0; i < rows.length; i += 10) {
       const part = rows.slice(i, i + 10);
+      const select =
+        'SELECT ?,?,?,?,?,?,?,?,?,? FROM accounts WHERE id=? AND user_id=? AND archived=0 AND currency=?';
       statements.push(
         db
           .prepare(
-            'INSERT INTO transactions (id,user_id,account_id,date,description,sub_description,amount,fingerprint,import_id,created_at) VALUES ' +
-              part.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',') +
+            'INSERT INTO transactions (id,user_id,account_id,date,description,sub_description,amount,fingerprint,import_id,created_at) ' +
+              (existingAccount
+                ? part.map(() => select).join(' UNION ALL ')
+                : `VALUES ${part.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')}`) +
               " ON CONFLICT(user_id,account_id,fingerprint) DO UPDATE SET sub_description=excluded.sub_description WHERE transactions.sub_description='' AND excluded.sub_description!=''",
           )
-          .bind(...part.flat()),
+          .bind(
+            ...(existingAccount
+              ? part.flatMap((row) => [
+                  ...row,
+                  accountId,
+                  user.userId,
+                  accountCurrency,
+                ])
+              : part.flat()),
+          ),
       );
     }
     statements.push(
       db
         .prepare(
-          'INSERT INTO imports (id,user_id,account_id,filename,added,skipped,created_at) SELECT ?,?,?,?,COUNT(*),?-COUNT(*),? FROM transactions WHERE import_id=? AND user_id=?',
+          `INSERT INTO imports (id,user_id,account_id,filename,added,skipped,created_at)
+           SELECT ?,?,?,?,
+             (SELECT COUNT(*) FROM transactions WHERE import_id=? AND user_id=?),
+             ?-(SELECT COUNT(*) FROM transactions WHERE import_id=? AND user_id=?),?
+           FROM accounts WHERE id=? AND user_id=? AND archived=0 AND currency=?`,
         )
         .bind(
           importId,
           user.userId,
           accountId,
           textValue(b.filename, 240),
-          rows.length,
-          now,
           importId,
           user.userId,
+          rows.length,
+          importId,
+          user.userId,
+          now,
+          accountId,
+          user.userId,
+          accountCurrency,
         ),
     );
     await db.batch(statements);
@@ -144,6 +176,11 @@ export async function POST(request: Request) {
       .prepare('SELECT added,skipped FROM imports WHERE id=? AND user_id=?')
       .bind(importId, user.userId)
       .first();
+    if (!result)
+      throw new AppError(
+        'The account changed or was archived. Refresh and try again.',
+        409,
+      );
     return json({ ...result, accountId });
   } catch (e) {
     if (
