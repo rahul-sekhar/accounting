@@ -776,6 +776,132 @@ table td {
   margin-top: 5px;
   font-size: 12px;
 }
+.history-row a {
+  color: inherit;
+  text-decoration: none;
+}
+.history-row a:hover {
+  color: #145bdf;
+}
+.history-more {
+  margin-top: 16px;
+}
+.import-results-page {
+  max-width: 1180px;
+}
+.back-link,
+.secondary-link {
+  color: #145bdf;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 28px;
+}
+.results-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.results-heading .eyebrow {
+  margin-bottom: 5px;
+}
+.results-heading .subtle {
+  margin-top: 7px;
+}
+.results-icon {
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eaf1ff;
+  color: #145bdf;
+}
+.results-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-top: 28px;
+}
+.results-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 19px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+.results-summary span {
+  color: #617187;
+  font-size: 13px;
+}
+.results-summary strong {
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+}
+.results-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  overflow-x: auto;
+}
+.results-panel .section-heading p {
+  margin-top: 7px;
+}
+.results-loading,
+.results-empty {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 36px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.results-empty svg {
+  color: #087f6e;
+}
+.results-empty p {
+  margin-top: 5px;
+}
+.occurrence,
+.unavailable-note {
+  display: block;
+  color: #617187;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.outcome-badge {
+  display: inline-block;
+  max-width: 240px;
+  color: #53657b;
+  background: #edf1f6;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.outcome-badge.enriched {
+  color: #087f6e;
+  background: #e7f8f3;
+}
+.results-more {
+  margin-top: 18px;
+}
+@media (max-width: 760px) {
+  .results-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .results-panel .section-heading {
+    flex-direction: column;
+  }
+}
 .page-footer {
   display: flex;
   align-items: center;

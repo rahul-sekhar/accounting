@@ -36,6 +36,7 @@ const mapping = {
 const csv =
   'Date,Description,Amount\n2026-08-01,QA BUS,-3.25\n2026-08-01,QA BUS,-3.25\n2026-08-02,QA PAYROLL,2000.00';
 const payload = {
+  operationId: crypto.randomUUID(),
   csv,
   filename: 'qa-only.csv',
   mapping,
@@ -92,15 +93,66 @@ const first = await req('import', 'POST', payload);
 assert.equal(first.status, 200, JSON.stringify(first));
 assert.equal(first.data.added, 3);
 const accountId = first.data.accountId;
-const second = await req('import', 'POST', { ...payload, accountId });
+const recovered = await req('import', 'POST', payload);
+assert.equal(recovered.status, 200, JSON.stringify(recovered));
+assert.equal(recovered.data.importId, first.data.importId);
+assert.equal(recovered.data.replayed, true);
+assert.equal(
+  (await req('import', 'POST', { ...payload, filename: 'conflict.csv' })).status,
+  409,
+);
+const second = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  accountId,
+});
 assert.equal(second.data.added, 0);
 assert.equal(second.data.skipped, 3);
+assert.equal(second.data.enriched, 0);
+const importDetails = await req(`imports/${second.data.importId}?outcome=duplicate&limit=2`);
+assert.equal(importDetails.status, 200, JSON.stringify(importDetails));
+assert.equal(importDetails.data.detailsAvailable, true);
+assert.equal(importDetails.data.outcomes.length, 2);
+assert.ok(importDetails.data.nextCursor);
+const importDetailsPage2 = await req(
+  `imports/${second.data.importId}?outcome=duplicate&limit=2&cursor=${importDetails.data.nextCursor}`,
+);
+assert.equal(importDetailsPage2.data.outcomes.length, 1);
+const importList = await req('imports?limit=1');
+assert.equal(importList.status, 200, JSON.stringify(importList));
+assert.equal(importList.data.items.length, 1);
+assert.ok(importList.data.nextCursor);
+const overlapPayload = {
+  ...payload,
+  accountId,
+  csv: 'Date,Description,Amount\n2026-08-03,QA CONCURRENT,-9.99',
+  filename: 'qa-concurrent.csv',
+};
+const overlapping = await Promise.all([
+  req('import', 'POST', { ...overlapPayload, operationId: crypto.randomUUID() }),
+  req('import', 'POST', { ...overlapPayload, operationId: crypto.randomUUID() }),
+]);
+assert.deepEqual(
+  overlapping.map((result) => result.status),
+  [200, 200],
+);
+assert.deepEqual(
+  overlapping.map((result) => result.data.added).sort((a, b) => a - b),
+  [0, 1],
+);
+assert.deepEqual(
+  overlapping.map((result) => result.data.skipped).sort((a, b) => a - b),
+  [0, 1],
+);
 let all = await req('data');
 assert.equal(all.status, 200);
-const rows = all.data.transactions.filter((t) => t.account_id === accountId);
+const rows = all.data.transactions.filter(
+  (t) => t.account_id === accountId && t.description !== 'QA CONCURRENT',
+);
 assert.equal(rows.length, 3);
 assert.equal(rows.filter((t) => t.description === 'QA BUS').length, 2);
 const reversePayload = {
+  operationId: crypto.randomUUID(),
   csv: 'Date,Description,Amount\n2026-08-10,QA CARD PURCHASE,12.34\n2026-08-11,QA CARD REFUND,-3.00',
   filename: 'qa-direction.csv',
   mapping: { ...mapping, sign: 'reverse' },
@@ -126,11 +178,42 @@ assert.deepEqual(
 );
 const reversedAgain = await req('import', 'POST', {
   ...reversePayload,
+  operationId: crypto.randomUUID(),
   accountId: reversed.data.accountId,
 });
 assert.equal(reversedAgain.status, 200, JSON.stringify(reversedAgain));
 assert.equal(reversedAgain.data.added, 0);
 assert.equal(reversedAgain.data.skipped, 2);
+const boundaryCsv = [
+  'Date,Description,Amount',
+  ...Array.from({ length: 2000 }, (_, index) =>
+    `2026-07-01,QA BOUNDARY ${index + 1},-${index + 1}.00`,
+  ),
+].join('\n');
+const boundary = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  csv: boundaryCsv,
+  filename: 'qa-boundary.csv',
+  account: {
+    bank: 'Boundary Test Institution',
+    name: 'QA 2000 row account',
+    type: 'Chequing',
+    currency: 'CAD',
+  },
+});
+assert.equal(boundary.status, 200, JSON.stringify(boundary));
+assert.equal(boundary.data.total, 2000);
+assert.equal(boundary.data.added, 2000);
+const boundaryAgain = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  accountId: boundary.data.accountId,
+  csv: boundaryCsv,
+  filename: 'qa-boundary-again.csv',
+});
+assert.equal(boundaryAgain.status, 200, JSON.stringify(boundaryAgain));
+assert.equal(boundaryAgain.data.skipped, 2000);
 const renamed = await req('account', 'PATCH', {
   id: accountId,
   action: 'update',
@@ -162,7 +245,7 @@ assert.equal(
   200,
 );
 assert.equal(
-  (await req('import', 'POST', { ...payload, accountId })).status,
+  (await req('import', 'POST', { ...payload, operationId: crypto.randomUUID(), accountId })).status,
   409,
 );
 assert.equal(
@@ -211,6 +294,35 @@ const memoryOff = await req('category', 'PATCH', {
   expectedRevision: changed.data.categoryRevision,
 });
 assert.equal(memoryOff.status, 200);
+const enrichmentMapping = { ...mapping, subDescription: 'Memo' };
+const enrichmentCsv =
+  'Date,Description,Memo,Amount\n2026-08-01,QA BUS,Route 4,-3.25\n2026-08-01,QA BUS,Route 7,-3.25\n2026-08-02,QA PAYROLL,September payroll,2000.00';
+const enrichedImport = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  accountId,
+  csv: enrichmentCsv,
+  filename: 'qa-enrichment.csv',
+  mapping: enrichmentMapping,
+});
+assert.equal(enrichedImport.status, 200, JSON.stringify(enrichedImport));
+assert.equal(enrichedImport.data.added, 0);
+assert.equal(enrichedImport.data.skipped, 3);
+assert.equal(enrichedImport.data.enriched, 3);
+const enrichmentDetails = await req(
+  `imports/${enrichedImport.data.importId}?outcome=duplicate_enriched`,
+);
+assert.equal(enrichmentDetails.data.outcomes.length, 3);
+const skippedOverwrite = await req('import', 'POST', {
+  ...payload,
+  operationId: crypto.randomUUID(),
+  accountId,
+  csv: enrichmentCsv.replaceAll('Route 4', 'Replacement').replaceAll('Route 7', 'Replacement 2'),
+  filename: 'qa-no-overwrite.csv',
+  mapping: enrichmentMapping,
+});
+assert.equal(skippedOverwrite.status, 200, JSON.stringify(skippedOverwrite));
+assert.equal(skippedOverwrite.data.enriched, 0);
 const memoryState = await req('review-memory');
 assert.equal(memoryState.status, 200);
 assert.equal(
@@ -225,7 +337,7 @@ assert.equal(
       category: 'Invalid',
       action: 'correct',
       operationId: crypto.randomUUID(),
-      expectedRevision: memoryOff.data.categoryRevision,
+      expectedRevision: memoryOff.data.categoryRevision + 1,
     })
   ).status,
   400,
@@ -260,16 +372,27 @@ assert.equal(
 assert.equal(all.data.accounts.find((a) => a.id === accountId).archived, false);
 assert.equal(
   all.data.transactions.filter((t) => t.account_id === accountId).length,
-  3,
+  4,
 );
 assert.equal(
   all.data.transactions.find((t) => t.id === rows[0].id).source,
   'manual',
 );
 assert.equal(
+  ['Route 4', 'Route 7', 'September payroll'].includes(
+    all.data.transactions.find((t) => t.id === rows[0].id).sub_description,
+  ),
+  true,
+);
+assert.equal(
+  all.data.transactions.find((t) => t.id === rows[0].id).category_revision,
+  memoryOff.data.categoryRevision + 1,
+);
+assert.equal(
   (
     await req('import', 'POST', {
       ...payload,
+      operationId: crypto.randomUUID(),
       accountId,
       csv: 'Date,Description,Amount,Currency\n2026-08-01,QA USD,50,USD',
     })
@@ -280,6 +403,7 @@ assert.equal(
   (
     await req('import', 'POST', {
       ...payload,
+      operationId: crypto.randomUUID(),
       accountId,
       csv: 'Date,Description,Amount\n2026-02-30,QA BAD,50',
     })
@@ -287,7 +411,7 @@ assert.equal(
   400,
 );
 assert.equal(
-  (await req('import', 'POST', { ...payload, accountId: 'someone-elses-id' }))
+  (await req('import', 'POST', { ...payload, operationId: crypto.randomUUID(), accountId: 'someone-elses-id' }))
     .status,
   404,
 );

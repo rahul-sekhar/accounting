@@ -30,6 +30,8 @@ import AccountManager, {
   EMPTY_ACCOUNT,
   type AccountDraft,
 } from './account-manager';
+import ImportHistory from './import-history';
+import ImportResults from './import-results';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -158,10 +160,21 @@ export default function Dashboard() {
   const [aiConfirm, setAiConfirm] = useState(false);
   const [manageCategories, setManageCategories] = useState(false);
   const pendingReviewOperations = useRef(new Map<string, string>());
+  const pendingImportOperation = useRef<{ key: string; id: string } | null>(null);
+  const [currentImportId, setCurrentImportId] = useState<string | null>(null);
   const [mappingBusy, setMappingBusy] = useState(false),
     [mappingNote, setMappingNote] = useState('');
   const mappingGate = useRef(new MappingSuggestionGate());
   const mappingAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const readLocation = () => {
+      const params = new URLSearchParams(window.location.search);
+      setCurrentImportId(params.get('view') === 'import' ? params.get('importId') : null);
+    };
+    readLocation();
+    window.addEventListener('popstate', readLocation);
+    return () => window.removeEventListener('popstate', readLocation);
+  }, []);
   const categoryLabel = (id: string) =>
     data.categories.find((c) => c.id === id)?.name || id;
   function changeMapping(value: Mapping) {
@@ -494,23 +507,26 @@ export default function Dashboard() {
     setBusy('import');
     setImportError('');
     try {
-      const r = await api<{ added: number; skipped: number }>(
+      const requestPayload = {
+        csv: raw,
+        filename,
+        mapping,
+        accountId: target === 'new' ? null : target,
+        account: { ...accountDraft },
+      };
+      const requestKey = JSON.stringify(requestPayload);
+      const operationId =
+        pendingImportOperation.current?.key === requestKey
+          ? pendingImportOperation.current.id
+          : crypto.randomUUID();
+      pendingImportOperation.current = { key: requestKey, id: operationId };
+      const r = await api<{ importId: string; added: number; skipped: number; enriched: number }>(
         'import',
         'POST',
-        {
-          csv: raw,
-          filename,
-          mapping,
-          accountId: target === 'new' ? null : target,
-          account: {
-            ...accountDraft,
-          },
-        },
+        { ...requestPayload, operationId },
       );
+      pendingImportOperation.current = null;
       await refresh();
-      setNotice(
-        `${r.added} transactions imported. ${r.skipped} matching transactions skipped.`,
-      );
       setShowImport(false);
       setCurrency(
         target === 'new'
@@ -519,6 +535,9 @@ export default function Dashboard() {
       );
       setAccountFilter('all');
       setMonth('all');
+      const nextUrl = `/?view=import&importId=${encodeURIComponent(r.importId)}`;
+      window.history.pushState({}, '', nextUrl);
+      setCurrentImportId(r.importId);
     } catch (e) {
       setImportError((e as Error).message);
     } finally {
@@ -557,6 +576,16 @@ export default function Dashboard() {
       setBusy('');
     }
   }
+  if (currentImportId)
+    return (
+      <div className="app-shell">
+        <header className="topbar">
+          <Link className="brand" href="/?view=transactions"><WalletCards size={26} /> account<span>view</span></Link>
+          <div className="top-right"><span className="privacy"><ShieldCheck size={16} /> Private workspace</span>{/* oxlint-disable-next-line next/no-html-link-for-pages -- auth requires a top-level navigation */}<a className="signout" href="/signout-with-chatgpt?return_to=%2F" target="_top">Sign out</a></div>
+        </header>
+        <ImportResults importId={currentImportId} />
+      </div>
+    );
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -1045,27 +1074,7 @@ export default function Dashboard() {
             </section>
           </>
         )}
-        {data.imports.length > 0 && (
-          <section className="section import-history">
-            <h2>Recent imports</h2>
-            {data.imports.slice(0, 5).map((i) => (
-              <div className="history-row" key={i.id}>
-                <FileSpreadsheet size={18} />
-                <div>
-                  <strong>{i.filename}</strong>
-                  <p className="subtle">
-                    {data.accounts.find((a) => a.id === i.account_id)?.name} ·{' '}
-                    {i.created_at.slice(0, 10)}
-                  </p>
-                </div>
-                <span>
-                  {i.added} added{' '}
-                  <span className="subtle">· {i.skipped} skipped</span>
-                </span>
-              </div>
-            ))}
-          </section>
-        )}
+        <ImportHistory initial={data.imports} />
         <footer className="page-footer">
           <ShieldCheck size={14} />
           <span>

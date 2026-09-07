@@ -20,6 +20,7 @@ const HISTORY_GUARD = `
   AND NOT EXISTS (SELECT 1 FROM imports WHERE imports.account_id=accounts.id AND imports.user_id=accounts.user_id)
   AND NOT EXISTS (SELECT 1 FROM transaction_reviews WHERE transaction_reviews.account_id=accounts.id AND transaction_reviews.user_id=accounts.user_id)
   AND NOT EXISTS (SELECT 1 FROM transaction_review_events WHERE transaction_review_events.account_id=accounts.id AND transaction_review_events.user_id=accounts.user_id)
+  AND NOT EXISTS (SELECT 1 FROM import_row_outcomes WHERE import_row_outcomes.account_id=accounts.id AND import_row_outcomes.user_id=accounts.user_id)
 `;
 
 async function findAccount(db: D1Database, id: string, userId: string) {

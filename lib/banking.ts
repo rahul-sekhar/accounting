@@ -58,6 +58,7 @@ export type Account = {
 export type Transaction = {
   id: string;
   account_id: string;
+  import_id: string;
   date: string;
   description: string;
   sub_description?: string;
@@ -85,6 +86,8 @@ export type ImportRecord = {
   filename: string;
   added: number;
   skipped: number;
+  enriched?: number;
+  report_version?: number | null;
   created_at: string;
 };
 export type AppData = {

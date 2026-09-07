@@ -45,6 +45,7 @@ function migratedDatabase() {
     '0001_foamy_zzzax.sql',
     '0002_robust_shooting_star.sql',
     '0003_daily_the_fury.sql',
+    '0004_import_outcomes.sql',
   ])
     database.exec(migration(name));
   return database;
@@ -116,7 +117,8 @@ test('account mutations are owner-scoped and protect populated history', async (
       VALUES ('a1','owner-1','Generic Bank','Main','Chequing','CAD',0,'2026-01-01'),
              ('a2','owner-2','Other Bank','Private','Savings','USD',0,'2026-01-01'),
              ('a3','owner-1','Unused Bank','Spare','Savings','CAD',0,'2026-01-01');
-    INSERT INTO imports VALUES ('i1','owner-1','a1','fixture.csv',0,0,'2026-01-02');
+    INSERT INTO imports (id,user_id,account_id,filename,added,skipped,created_at)
+      VALUES ('i1','owner-1','a1','fixture.csv',0,0,'2026-01-02');
   `);
   const databaseApi = d1(database);
   const input = {

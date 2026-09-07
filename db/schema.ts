@@ -57,9 +57,58 @@ export const imports = sqliteTable(
     filename: text('filename').notNull(),
     added: integer('added').notNull(),
     skipped: integer('skipped').notNull(),
+    enriched: integer('enriched').notNull().default(0),
+    reportVersion: integer('report_version'),
     createdAt: text('created_at').notNull(),
   },
   (t) => [index('imports_owner').on(t.userId)],
+);
+
+export const importRowOutcomes = sqliteTable(
+  'import_row_outcomes',
+  {
+    userId: text('user_id').notNull(),
+    importId: text('import_id')
+      .notNull()
+      .references(() => imports.id, { onDelete: 'cascade' }),
+    accountId: text('account_id').notNull(),
+    rowOrdinal: integer('row_ordinal').notNull(),
+    occurrence: integer('occurrence').notNull(),
+    date: text('date').notNull(),
+    description: text('description').notNull(),
+    subDescription: text('sub_description').notNull(),
+    amount: integer('amount').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+    outcome: text('outcome').notNull(),
+    transactionId: text('transaction_id').notNull(),
+    actionDetail: text('action_detail').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.importId, t.rowOrdinal] }),
+    index('import_outcomes_owner_import_outcome').on(
+      t.userId,
+      t.importId,
+      t.outcome,
+      t.rowOrdinal,
+    ),
+    index('import_outcomes_owner_account').on(t.userId, t.accountId),
+  ],
+);
+
+export const operationReceipts = sqliteTable(
+  'operation_receipts',
+  {
+    userId: text('user_id').notNull(),
+    kind: text('kind').notNull(),
+    operationId: text('operation_id').notNull(),
+    requestHash: text('request_hash').notNull(),
+    resultJson: text('result_json').notNull(),
+    committedAt: text('committed_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.kind, t.operationId] }),
+    index('operation_receipts_owner_committed').on(t.userId, t.committedAt),
+  ],
 );
 
 export const categoryDefinitions = sqliteTable(
