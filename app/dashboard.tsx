@@ -8,6 +8,10 @@ import {
   type BulkOutcome,
 } from '@/lib/bulk-operation';
 import {
+  PanelRightClose,
+  PanelRightOpen,
+  ChartPie,
+  SlidersHorizontal,
   Upload,
   ShieldCheck,
   FileSpreadsheet,
@@ -20,6 +24,7 @@ import {
   LockKeyhole,
   MoreHorizontal,
 } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
@@ -390,7 +395,7 @@ export default function Dashboard({
   accountsPage?: boolean;
   categoriesPage?: boolean;
 }) {
-  const [showBreakdown, setShowBreakdown] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(true);
   const [data, setData] = useState<AppData>(initial),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
@@ -1096,221 +1101,232 @@ export default function Dashboard({
     return (
       <div className="app-shell">
         <AppNavbar active="transactions" navigationLocked={bulkLocked} />
-        <ImportResults importId={currentImportId} navigationLocked={bulkLocked}>
-          <section className="section transaction-panel import-transaction-panel">
-            {error && (
-              <div className="message error" role="alert">
-                {error}
-              </div>
-            )}
-            {notice && (
-              <output className="message success">
-                <CheckCircle2 size={18} />
-                {notice}
-                <button
-                  onClick={() => setNotice('')}
-                  aria-label="Dismiss notification"
-                >
-                  ×
-                </button>
-              </output>
-            )}
-            <div className="transaction-heading">
-              <div>
-                <h2>
-                  {filters.importGroup === currentImportId
-                    ? 'New transactions '
-                    : 'Transactions '}
-                  <span className="count">{visible.length}</span>
-                </h2>
-                <p className="subtle">
-                  {filters.importGroup === currentImportId
-                    ? 'Transactions added by this import and still available.'
-                    : 'The historical import report remains open; the table follows your current filters.'}
-                </p>
-              </div>
-              <div className="results-table-actions">
-                <button
-                  className="secondary"
-                  disabled={
-                    bulkLocked ||
-                    JSON.stringify(filters) ===
-                      JSON.stringify({
+        <div className="page-scroll">
+          <ImportResults
+            importId={currentImportId}
+            navigationLocked={bulkLocked}
+          >
+            <section className="section transaction-panel import-transaction-panel">
+              {error && (
+                <div className="message error" role="alert">
+                  {error}
+                </div>
+              )}
+              {notice && (
+                <output className="message success">
+                  <CheckCircle2 size={18} />
+                  {notice}
+                  <button
+                    onClick={() => setNotice('')}
+                    aria-label="Dismiss notification"
+                  >
+                    ×
+                  </button>
+                </output>
+              )}
+              <div className="transaction-heading">
+                <div>
+                  <h2>
+                    {filters.importGroup === currentImportId
+                      ? 'New transactions '
+                      : 'Transactions '}
+                    <span className="count">{visible.length}</span>
+                  </h2>
+                  <p className="subtle">
+                    {filters.importGroup === currentImportId
+                      ? 'Transactions added by this import and still available.'
+                      : 'The historical import report remains open; the table follows your current filters.'}
+                  </p>
+                </div>
+                <div className="results-table-actions">
+                  <button
+                    className="secondary"
+                    disabled={
+                      bulkLocked ||
+                      JSON.stringify(filters) ===
+                        JSON.stringify({
+                          ...DEFAULT_TRANSACTION_FILTERS,
+                          currency,
+                        })
+                    }
+                    onClick={() =>
+                      updateFilters({
                         ...DEFAULT_TRANSACTION_FILTERS,
                         currency,
                       })
-                  }
-                  onClick={() =>
-                    updateFilters({ ...DEFAULT_TRANSACTION_FILTERS, currency })
-                  }
-                >
-                  Clear filters
-                </button>
-                <Link
-                  className="secondary-link"
-                  href={`/?${filtersToSearchParams(filters, new URLSearchParams({ view: 'transactions' })).toString()}`}
-                  aria-disabled={bulkLocked}
-                  onClick={(event) => {
-                    if (bulkLocked) event.preventDefault();
-                  }}
-                >
-                  Open full transaction view
-                </Link>
+                    }
+                  >
+                    Clear filters
+                  </button>
+                  <Link
+                    className="secondary-link"
+                    href={`/?${filtersToSearchParams(filters, new URLSearchParams({ view: 'transactions' })).toString()}`}
+                    aria-disabled={bulkLocked}
+                    onClick={(event) => {
+                      if (bulkLocked) event.preventDefault();
+                    }}
+                  >
+                    Open full transaction view
+                  </Link>
+                </div>
               </div>
-            </div>
-            <TransactionFilterControls
-              disabled={bulkLocked}
-              filters={filters}
-              errors={filterErrors}
-              data={data}
-              accounts={accounts}
-              update={updateFilters}
-            />
-            {!filterValid && (
-              <div className="message error" role="alert">
-                Correct the filter values to show transactions.
-              </div>
-            )}
-            <TransactionSelectionToolbar
-              selectedCount={selectedIds.size}
-              matchingCount={filteredIds.length}
-              eligibleCount={eligibleSelected.length}
-              protectedCount={protectedSelected}
-              rerunCount={rerunSelected}
-              aiReady={data.aiReady}
-              operation={bulkOperation}
-              deleteConfirmOpen={deleteConfirmOpen}
-              categorizeConfirmOpen={categorizeConfirmOpen}
-              onDeleteConfirmOpenChange={setDeleteConfirmOpen}
-              onCategorizeConfirmOpenChange={setCategorizeConfirmOpen}
-              onSelectAll={() =>
-                editSelection(() => captureMatchingTransactions(filteredIds))
-              }
-              onClear={() => {
-                setSelectedIds(new Set());
-              }}
-              onDelete={() => runDeletion(selectedInFilterOrder())}
-              onCategorize={() => categorize(selectedInFilterOrder())}
-              onStop={() => bulkController.stop()}
-              onRetry={() => void bulkController.resume()}
-              onRecover={() => bulkController.recover()}
-              onRetryRefresh={() => bulkController.retryRefresh()}
-              onAbandon={() => bulkController.abandon()}
-            />
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="selection-cell">
-                    <Checkbox
-                      aria-label="Select all transactions on this page"
-                      checked={pageSelection.checked}
-                      indeterminate={pageSelection.indeterminate}
-                      disabled={bulkLocked || !pageIds.length}
-                      onCheckedChange={(checked) =>
-                        editSelection((current) =>
-                          toggleTransactionPage(
-                            current,
-                            pageIds,
-                            checked === true,
-                          ),
-                        )
-                      }
-                    />
-                  </TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Sub-description</TableHead>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="right">Amount</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pageTransactions.map((transaction) => (
-                  <TableRow key={transaction.id}>
-                    <TableCell className="selection-cell">
+              <TransactionFilterControls
+                disabled={bulkLocked}
+                filters={filters}
+                errors={filterErrors}
+                data={data}
+                accounts={accounts}
+                update={updateFilters}
+              />
+              {!filterValid && (
+                <div className="message error" role="alert">
+                  Correct the filter values to show transactions.
+                </div>
+              )}
+              <TransactionSelectionToolbar
+                selectedCount={selectedIds.size}
+                matchingCount={filteredIds.length}
+                eligibleCount={eligibleSelected.length}
+                protectedCount={protectedSelected}
+                rerunCount={rerunSelected}
+                aiReady={data.aiReady}
+                operation={bulkOperation}
+                deleteConfirmOpen={deleteConfirmOpen}
+                categorizeConfirmOpen={categorizeConfirmOpen}
+                onDeleteConfirmOpenChange={setDeleteConfirmOpen}
+                onCategorizeConfirmOpenChange={setCategorizeConfirmOpen}
+                onSelectAll={() =>
+                  editSelection(() => captureMatchingTransactions(filteredIds))
+                }
+                onClear={() => {
+                  setSelectedIds(new Set());
+                }}
+                onDelete={() => runDeletion(selectedInFilterOrder())}
+                onCategorize={() => categorize(selectedInFilterOrder())}
+                onStop={() => bulkController.stop()}
+                onRetry={() => void bulkController.resume()}
+                onRecover={() => bulkController.recover()}
+                onRetryRefresh={() => bulkController.retryRefresh()}
+                onAbandon={() => bulkController.abandon()}
+              />
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="selection-cell">
                       <Checkbox
-                        aria-label={`Select ${transaction.description} on ${transaction.date}`}
-                        checked={selectedIds.has(transaction.id)}
-                        disabled={bulkLocked}
+                        aria-label="Select all transactions on this page"
+                        checked={pageSelection.checked}
+                        indeterminate={pageSelection.indeterminate}
+                        disabled={bulkLocked || !pageIds.length}
                         onCheckedChange={(checked) =>
                           editSelection((current) =>
-                            toggleTransaction(
+                            toggleTransactionPage(
                               current,
-                              transaction.id,
+                              pageIds,
                               checked === true,
                             ),
                           )
                         }
                       />
-                    </TableCell>
-                    <TableCell className="date-cell">
-                      {transaction.date}
-                    </TableCell>
-                    <TableCell className="description-cell">
-                      {transaction.description}
-                    </TableCell>
-                    <TableCell className="sub-description-cell">
-                      {transaction.sub_description || (
-                        <span className="subtle">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <span className="subtle">
-                        {
-                          data.accounts.find(
-                            (account) => account.id === transaction.account_id,
-                          )?.name
-                        }
-                      </span>
-                    </TableCell>
-                    <TableCell>{categoryLabel(transaction.category)}</TableCell>
-                    <TableCell
-                      className={
-                        'right amount ' +
-                        (transaction.amount > 0 ? 'income' : '')
-                      }
-                    >
-                      {transaction.amount > 0 ? '+' : ''}
-                      {money(transaction.amount, currency)}
-                    </TableCell>
+                    </TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Sub-description</TableHead>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="right">Amount</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {!visible.length && (
-              <div className="small-empty">
-                No new transactions remain from this import. Matching rows are
-                still shown above.
+                </TableHeader>
+                <TableBody>
+                  {pageTransactions.map((transaction) => (
+                    <TableRow key={transaction.id}>
+                      <TableCell className="selection-cell">
+                        <Checkbox
+                          aria-label={`Select ${transaction.description} on ${transaction.date}`}
+                          checked={selectedIds.has(transaction.id)}
+                          disabled={bulkLocked}
+                          onCheckedChange={(checked) =>
+                            editSelection((current) =>
+                              toggleTransaction(
+                                current,
+                                transaction.id,
+                                checked === true,
+                              ),
+                            )
+                          }
+                        />
+                      </TableCell>
+                      <TableCell className="date-cell">
+                        {transaction.date}
+                      </TableCell>
+                      <TableCell className="description-cell">
+                        {transaction.description}
+                      </TableCell>
+                      <TableCell className="sub-description-cell">
+                        {transaction.sub_description || (
+                          <span className="subtle">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className="subtle">
+                          {
+                            data.accounts.find(
+                              (account) =>
+                                account.id === transaction.account_id,
+                            )?.name
+                          }
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {categoryLabel(transaction.category)}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          'right amount ' +
+                          (transaction.amount > 0 ? 'income' : '')
+                        }
+                      >
+                        {transaction.amount > 0 ? '+' : ''}
+                        {money(transaction.amount, currency)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {!visible.length && (
+                <div className="small-empty">
+                  No new transactions remain from this import. Matching rows are
+                  still shown above.
+                </div>
+              )}
+              <div className="table-footer">
+                <span>
+                  {visible.length
+                    ? `${currentPage * 25 + 1}–${Math.min(currentPage * 25 + 25, visible.length)} of ${visible.length}`
+                    : '0 transactions'}
+                </span>
+                <div>
+                  <button
+                    className="icon-button"
+                    aria-label="Previous page"
+                    disabled={currentPage === 0}
+                    onClick={() => setPage(Math.max(0, currentPage - 1))}
+                  >
+                    <ChevronLeft size={18} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    aria-label="Next page"
+                    disabled={(currentPage + 1) * 25 >= visible.length}
+                    onClick={() => setPage(currentPage + 1)}
+                  >
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
               </div>
-            )}
-            <div className="table-footer">
-              <span>
-                {visible.length
-                  ? `${currentPage * 25 + 1}–${Math.min(currentPage * 25 + 25, visible.length)} of ${visible.length}`
-                  : '0 transactions'}
-              </span>
-              <div>
-                <button
-                  className="icon-button"
-                  aria-label="Previous page"
-                  disabled={currentPage === 0}
-                  onClick={() => setPage(Math.max(0, currentPage - 1))}
-                >
-                  <ChevronLeft size={18} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Next page"
-                  disabled={(currentPage + 1) * 25 >= visible.length}
-                  onClick={() => setPage(currentPage + 1)}
-                >
-                  <ChevronRight size={18} />
-                </button>
-              </div>
-            </div>
-          </section>
-        </ImportResults>
+            </section>
+          </ImportResults>
+        </div>
       </div>
     );
   return (
@@ -1325,198 +1341,125 @@ export default function Dashboard({
         }
         navigationLocked={bulkLocked}
       />
-      <main>
-        <div
+      <div
+        className={
+          !accountsPage && !categoriesPage
+            ? `transaction-page-layout ${showSidebar ? 'sidebar-expanded' : 'sidebar-collapsed'}`
+            : 'page-scroll'
+        }
+      >
+        <main
           className={
-            accountsPage || categoriesPage ? 'page-heading' : 'page-actions'
+            !accountsPage && !categoriesPage ? 'transactions-page' : undefined
           }
         >
-          {(accountsPage || categoriesPage) && (
-            <div>
-              <h1>{accountsPage ? 'Accounts' : 'Categories'}</h1>
-              <p className="subtle">
-                {accountsPage
-                  ? 'Manage your accounts and import transactions.'
-                  : 'Create and rename categories, or archive ones you no longer use.'}
-              </p>
+          <div
+            className={
+              accountsPage || categoriesPage ? 'page-heading' : 'page-actions'
+            }
+          >
+            {(accountsPage || categoriesPage) && (
+              <div>
+                <h1>{accountsPage ? 'Accounts' : 'Categories'}</h1>
+                <p className="subtle">
+                  {accountsPage
+                    ? 'Manage your accounts and import transactions.'
+                    : 'Create and rename categories, or archive ones you no longer use.'}
+                </p>
+              </div>
+            )}
+            {!categoriesPage && (
+              <button
+                className="primary import-csv-button"
+                onClick={() => startImport()}
+                disabled={loading || !!busy || bulkLocked}
+              >
+                <Upload size={15} /> Import CSV
+              </button>
+            )}
+          </div>
+          {error && (
+            <div className="message error" role="alert">
+              {error}
+              <button
+                onClick={() => {
+                  setError('');
+                  setLoading(true);
+                  refresh()
+                    .catch((e) => setError(e.message))
+                    .finally(() => setLoading(false));
+                }}
+              >
+                Retry
+              </button>
             </div>
           )}
-          {!categoriesPage && (
-            <button
-              className="primary"
-              onClick={() => startImport()}
-              disabled={loading || !!busy || bulkLocked}
-            >
-              <Upload size={17} /> Import CSV
-            </button>
+          {notice && (
+            <output className="message success">
+              <CheckCircle2 size={18} />
+              {notice}
+              <button
+                onClick={() => setNotice('')}
+                aria-label="Dismiss notification"
+              >
+                ×
+              </button>
+            </output>
           )}
-        </div>
-        {error && (
-          <div className="message error" role="alert">
-            {error}
-            <button
-              onClick={() => {
-                setError('');
-                setLoading(true);
-                refresh()
-                  .catch((e) => setError(e.message))
-                  .finally(() => setLoading(false));
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-        {notice && (
-          <output className="message success">
-            <CheckCircle2 size={18} />
-            {notice}
-            <button
-              onClick={() => setNotice('')}
-              aria-label="Dismiss notification"
-            >
-              ×
-            </button>
-          </output>
-        )}
-        {categoriesPage ? (
-          loading ? (
-            <output className="subtle">Loading categories…</output>
-          ) : !error ? (
-            <CategoryManager categories={data.categories} onSaved={refresh} />
-          ) : null
-        ) : accountsPage ? (
-          <AccountManager
-            accounts={data.accounts}
-            transactionAccountIds={
-              new Set([
-                ...data.transactions.map(
-                  (transaction) => transaction.account_id,
-                ),
-                ...data.imports.map((record) => record.account_id),
-              ])
-            }
-            busy={loading || !!busy || bulkLocked}
-            request={(method, payload) => api('account', method, payload)}
-            onChanged={refresh}
-            onImport={startImport}
-            onNotice={setNotice}
-            onError={setError}
-          />
-        ) : (
-          <>
-            {!loading && !data.transactions.length ? (
-              <Empty className="empty-panel">
-                <EmptyHeader>
-                  <Upload size={30} />
-                  <EmptyTitle className="empty-title">
-                    Start with a transaction export
-                  </EmptyTitle>
-                  <EmptyDescription>
-                    Upload a CSV to bring your accounts and transactions into
-                    view. You’ll review the columns and amounts before saving.
-                  </EmptyDescription>
-                </EmptyHeader>
-                <button className="primary" onClick={() => startImport()}>
-                  <Upload size={16} /> Import your first CSV
-                </button>
-                <p className="privacy">
-                  <LockKeyhole size={14} /> Saved in your private cloud
-                  workspace
-                </p>
-              </Empty>
-            ) : (
-              <>
-                <div className="breakdown-toolbar">
-                  <button
-                    className="secondary"
-                    aria-expanded={showBreakdown}
-                    aria-controls="transaction-breakdown"
-                    onClick={() => setShowBreakdown((shown) => !shown)}
-                  >
-                    {showBreakdown ? 'Hide breakdown' : 'Show breakdown'}
+          {categoriesPage ? (
+            loading ? (
+              <output className="subtle">Loading categories…</output>
+            ) : !error ? (
+              <CategoryManager categories={data.categories} onSaved={refresh} />
+            ) : null
+          ) : accountsPage ? (
+            <>
+              <AccountManager
+                accounts={data.accounts}
+                transactionAccountIds={
+                  new Set([
+                    ...data.transactions.map(
+                      (transaction) => transaction.account_id,
+                    ),
+                    ...data.imports.map((record) => record.account_id),
+                  ])
+                }
+                busy={loading || !!busy || bulkLocked}
+                request={(method, payload) => api('account', method, payload)}
+                onChanged={refresh}
+                onImport={startImport}
+                onNotice={setNotice}
+                onError={setError}
+              />
+              <ImportHistory
+                initial={data.imports}
+                navigationLocked={bulkLocked}
+              />
+            </>
+          ) : (
+            <>
+              {!loading && !data.transactions.length ? (
+                <Empty className="empty-panel">
+                  <EmptyHeader>
+                    <Upload size={30} />
+                    <EmptyTitle className="empty-title">
+                      Start with a transaction export
+                    </EmptyTitle>
+                    <EmptyDescription>
+                      Upload a CSV to bring your accounts and transactions into
+                      view. You’ll review the columns and amounts before saving.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <button className="primary" onClick={() => startImport()}>
+                    <Upload size={16} /> Import your first CSV
                   </button>
-                </div>
-                <div
-                  className={
-                    showBreakdown
-                      ? 'transaction-workspace with-breakdown'
-                      : 'transaction-workspace'
-                  }
-                >
-                  <aside
-                    id="transaction-breakdown"
-                    className="breakdown-sidebar"
-                    aria-label="Transaction breakdown"
-                    hidden={!showBreakdown}
-                  >
-                    <div className="analysis-header">
-                      <div>
-                        <h2>Transaction breakdown</h2>
-                        <p className="subtle">
-                          Totals follow your categories. Review transfers and
-                          refunds for accuracy.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="analysis-grid">
-                      <section className="spending-panel">
-                        <div className="section-heading">
-                          <h3>Where your money goes</h3>
-                          <span className="subtle">{currency}</span>
-                        </div>
-                        {spending.length ? (
-                          <div className="spending-content">
-                            <figure
-                              className="donut"
-                              style={{
-                                background: `conic-gradient(${chartSegments})`,
-                              }}
-                              aria-label="Spending by category, detailed in the adjacent list"
-                            >
-                              <div>
-                                <span>Transaction outflow</span>
-                                <strong>
-                                  {money(spendingTotal, currency)}
-                                </strong>
-                              </div>
-                            </figure>
-                            <div className="legend">
-                              {spending.slice(0, 5).map((s, i) => (
-                                <button
-                                  className="legend-row"
-                                  key={categoryLabel(s.category)}
-                                  onClick={() =>
-                                    updateFilters({ category: s.category })
-                                  }
-                                >
-                                  <span className="legend-label">
-                                    <i
-                                      style={{
-                                        background: colors[i % colors.length],
-                                      }}
-                                    />
-                                    {categoryLabel(s.category)}
-                                  </span>
-                                  <strong>{money(s.amount, currency)}</strong>
-                                </button>
-                              ))}
-                              {spending.length > 5 && (
-                                <span className="subtle">
-                                  + {spending.length - 5} more categories in the
-                                  transactions below
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="small-empty">
-                            No spending in this selection.
-                          </div>
-                        )}
-                      </section>
-                    </div>
-                  </aside>
+                  <p className="privacy">
+                    <LockKeyhole size={14} /> Saved in your private cloud
+                    workspace
+                  </p>
+                </Empty>
+              ) : (
+                <>
                   <section className="section transaction-panel">
                     <div className="transaction-heading">
                       <div>
@@ -1538,34 +1481,26 @@ export default function Dashboard({
                           <ArrowRight size={15} />
                         </button>
                       )}
-                      <button
-                        className="secondary"
-                        disabled={
-                          bulkLocked ||
-                          JSON.stringify(filters) ===
-                            JSON.stringify({
-                              ...DEFAULT_TRANSACTION_FILTERS,
-                              currency,
-                            })
-                        }
-                        onClick={() =>
-                          updateFilters({
-                            ...DEFAULT_TRANSACTION_FILTERS,
-                            currency,
-                          })
-                        }
-                      >
-                        Clear filters
-                      </button>
                     </div>
-                    <TransactionFilterControls
-                      disabled={bulkLocked}
-                      filters={filters}
-                      errors={filterErrors}
-                      data={data}
-                      accounts={accounts}
-                      update={updateFilters}
-                    />
+                    {filters.category !== 'all' && (
+                      <div className="active-category-filter">
+                        <span>
+                          Category:{' '}
+                          <strong>
+                            {filters.category === 'review'
+                              ? 'Needs review'
+                              : categoryLabel(filters.category)}
+                          </strong>
+                        </span>
+                        <button
+                          className="text-button"
+                          disabled={bulkLocked}
+                          onClick={() => updateFilters({ category: 'all' })}
+                        >
+                          View all categories
+                        </button>
+                      </div>
+                    )}
                     {!filterValid && (
                       <div className="message error" role="alert">
                         Correct the filter values to show transactions.
@@ -1839,23 +1774,165 @@ export default function Dashboard({
                       </div>
                     </div>
                   </section>
-                </div>
-              </>
-            )}
-            <ImportHistory
-              initial={data.imports}
-              navigationLocked={bulkLocked}
-            />
-          </>
+                </>
+              )}
+            </>
+          )}
+          <footer className="page-footer">
+            <ShieldCheck size={14} />
+            <span>
+              Private to your signed-in account. Transactions are added with
+              manual CSV imports.
+            </span>
+          </footer>
+        </main>
+        {!accountsPage && !categoriesPage && (
+          <aside
+            id="transaction-sidebar"
+            className="transaction-sidebar"
+            aria-label="Transaction tools"
+          >
+            <div className="sidebar-rail">
+              <button
+                className="icon-button sidebar-toggle"
+                aria-label={showSidebar ? 'Collapse sidebar' : 'Expand sidebar'}
+                title={showSidebar ? 'Collapse sidebar' : 'Expand sidebar'}
+                aria-expanded={showSidebar}
+                aria-controls="sidebar-content"
+                onClick={() => setShowSidebar((shown) => !shown)}
+              >
+                {showSidebar ? (
+                  <PanelRightClose size={20} />
+                ) : (
+                  <PanelRightOpen size={20} />
+                )}
+              </button>
+            </div>
+            <div
+              id="sidebar-content"
+              className="sidebar-content"
+              hidden={!showSidebar}
+            >
+              <Tabs defaultValue="breakdown">
+                <TabsList
+                  className="sidebar-tabs"
+                  aria-label="Transaction tools"
+                >
+                  <TabsTrigger value="breakdown">
+                    <ChartPie size={16} /> Breakdown
+                  </TabsTrigger>
+                  <TabsTrigger value="filters">
+                    <SlidersHorizontal size={16} /> Filters
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="breakdown">
+                  <div className="analysis-header">
+                    <div>
+                      <h2>Transaction breakdown</h2>
+                      <p className="subtle">
+                        Totals follow your categories. Review transfers and
+                        refunds for accuracy.
+                      </p>
+                    </div>
+                  </div>
+                  {filters.category !== 'all' && (
+                    <button
+                      className="text-button breakdown-reset"
+                      disabled={bulkLocked}
+                      onClick={() => updateFilters({ category: 'all' })}
+                    >
+                      View all categories
+                    </button>
+                  )}
+                  <div className="analysis-grid">
+                    <section className="spending-panel">
+                      <div className="section-heading">
+                        <h3>Where your money goes</h3>
+                        <span className="subtle">{currency}</span>
+                      </div>
+                      {spending.length ? (
+                        <div className="spending-content">
+                          <figure
+                            className="donut"
+                            style={{
+                              background: `conic-gradient(${chartSegments})`,
+                            }}
+                            aria-label="Spending by category, detailed in the adjacent list"
+                          >
+                            <div>
+                              <span>Transaction outflow</span>
+                              <strong>{money(spendingTotal, currency)}</strong>
+                            </div>
+                          </figure>
+                          <div className="legend">
+                            {spending.map((s, i) => (
+                              <button
+                                className="legend-row"
+                                key={s.category}
+                                disabled={bulkLocked}
+                                aria-pressed={filters.category === s.category}
+                                onClick={() =>
+                                  updateFilters({ category: s.category })
+                                }
+                              >
+                                <span className="legend-label">
+                                  <i
+                                    style={{
+                                      background: colors[i % colors.length],
+                                    }}
+                                  />
+                                  {categoryLabel(s.category)}
+                                </span>
+                                <strong>{money(s.amount, currency)}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="small-empty">
+                          No spending in this selection.
+                        </div>
+                      )}
+                    </section>
+                  </div>
+                </TabsContent>
+                <TabsContent value="filters">
+                  <div className="sidebar-filter-heading">
+                    <h2>Filters</h2>
+                    <button
+                      className="secondary"
+                      disabled={
+                        bulkLocked ||
+                        JSON.stringify(filters) ===
+                          JSON.stringify({
+                            ...DEFAULT_TRANSACTION_FILTERS,
+                            currency,
+                          })
+                      }
+                      onClick={() =>
+                        updateFilters({
+                          ...DEFAULT_TRANSACTION_FILTERS,
+                          currency,
+                        })
+                      }
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                  <TransactionFilterControls
+                    disabled={bulkLocked}
+                    filters={filters}
+                    errors={filterErrors}
+                    data={data}
+                    accounts={accounts}
+                    update={updateFilters}
+                  />
+                </TabsContent>
+              </Tabs>
+            </div>
+          </aside>
         )}
-        <footer className="page-footer">
-          <ShieldCheck size={14} />
-          <span>
-            Private to your signed-in account. Transactions are added with
-            manual CSV imports.
-          </span>
-        </footer>
-      </main>
+      </div>
       <Dialog
         open={showImport}
         onOpenChange={(v) => {
