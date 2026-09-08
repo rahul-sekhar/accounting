@@ -1,12 +1,5 @@
 'use client';
 import { useState } from 'react';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/ui/native-select';
 import type { CategoryDefinition, CategoryKind } from '@/lib/banking';
 import type { MemoryCluster, ReviewMemoryRow } from '@/lib/review-memory';
@@ -17,13 +10,9 @@ const kinds = [
   { value: 'investment', label: 'Investment' },
 ];
 export default function CategoryManager({
-  open,
-  onOpenChange,
   categories,
   onSaved,
 }: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
   categories: CategoryDefinition[];
   onSaved: () => Promise<unknown>;
 }) {
@@ -33,7 +22,10 @@ export default function CategoryManager({
     [saving, setSaving] = useState(false),
     [error, setError] = useState(''),
     [view, setView] = useState<'categories' | 'memory'>('categories'),
-    [memory, setMemory] = useState<{ clusters: MemoryCluster[]; reviews: ReviewMemoryRow[] } | null>(null);
+    [memory, setMemory] = useState<{
+      clusters: MemoryCluster[];
+      reviews: ReviewMemoryRow[];
+    } | null>(null);
   async function loadMemory() {
     const response = await fetch('/api/review-memory');
     const result = (await response.json()) as {
@@ -41,8 +33,12 @@ export default function CategoryManager({
       reviews?: ReviewMemoryRow[];
       error?: string;
     };
-    if (!response.ok) throw new Error(result.error || 'Could not load categorization memory.');
-    setMemory({ clusters: result.clusters || [], reviews: result.reviews || [] });
+    if (!response.ok)
+      throw new Error(result.error || 'Could not load categorization memory.');
+    setMemory({
+      clusters: result.clusters || [],
+      reviews: result.reviews || [],
+    });
   }
   async function save(item: CategoryDefinition | undefined, archive?: boolean) {
     setSaving(true);
@@ -71,42 +67,33 @@ export default function CategoryManager({
     }
   }
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!saving) {
-          onOpenChange(v);
-          setError('');
-          setEditing(null);
-          if (!v) setView('categories');
-        }
-      }}
-    >
-      <DialogContent className="category-dialog">
-        <DialogHeader>
-          <DialogTitle className="dialog-title">Manage categories</DialogTitle>
-          <DialogDescription>
-            Create and rename categories, or archive ones you no longer use.
-            Archived categories remain on past transactions and can be restored.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="category-scroll">
-          <div className="manager-tabs" role="tablist" aria-label="Category settings">
-            <button className={view === 'categories' ? 'active' : ''} onClick={() => setView('categories')}>
-              Categories
-            </button>
-            <button
-              className={view === 'memory' ? 'active' : ''}
-              onClick={() => {
-                setView('memory');
-                void loadMemory().catch((e) => setError(e.message));
-              }}
-            >
-              Categorization memory
-            </button>
-          </div>
-          {view === 'categories' ? (
-          <>
+    <section className="category-page" aria-label="Manage categories">
+      <p className="subtle">
+        Archived categories remain on past transactions and can be restored.
+      </p>
+      <div
+        className="manager-tabs"
+        role="tablist"
+        aria-label="Category settings"
+      >
+        <button
+          className={view === 'categories' ? 'active' : ''}
+          onClick={() => setView('categories')}
+        >
+          Categories
+        </button>
+        <button
+          className={view === 'memory' ? 'active' : ''}
+          onClick={() => {
+            setView('memory');
+            void loadMemory().catch((e) => setError(e.message));
+          }}
+        >
+          Categorization memory
+        </button>
+      </div>
+      {view === 'categories' ? (
+        <>
           <form
             className="category-form"
             onSubmit={(e) => {
@@ -209,58 +196,87 @@ export default function CategoryManager({
               </div>
             ))}
           </div>
-          </>
+        </>
+      ) : (
+        <div className="memory-view">
+          <p className="import-note">
+            These are your latest explicit reviews. The AI may use them as
+            context; this is reference-based personalization, not training or a
+            guaranteed rule.
+          </p>
+          {!memory ? (
+            <p className="subtle">Loading categorization memory…</p>
+          ) : !memory.reviews.length ? (
+            <p className="small-empty">No reviewed transactions yet.</p>
           ) : (
-            <div className="memory-view">
-              <p className="import-note">
-                These are your latest explicit reviews. The AI may use them as context; this is reference-based personalization, not training or a guaranteed rule.
-              </p>
-              {!memory ? (
-                <p className="subtle">Loading categorization memory…</p>
-              ) : !memory.reviews.length ? (
-                <p className="small-empty">No reviewed transactions yet.</p>
-              ) : (
-                <>
-                  <div className="memory-summary">
-                    <strong>{memory.clusters.length} active patterns</strong>
-                    <span>{memory.reviews.length} reviewed transactions</span>
-                  </div>
-                  {memory.clusters.map((cluster) => (
-                    <details className="memory-cluster" key={cluster.clusterId}>
-                      <summary>
-                        <span>{cluster.representativeDescription}{cluster.representativeSubDescription ? ` · ${cluster.representativeSubDescription}` : ''}</span>
-                        <span>{cluster.conflicting ? 'Conflicting alternatives' : cluster.alternatives[0]?.categoryName}</span>
-                      </summary>
-                      <p className="subtle">{cluster.accountType} · {cluster.currency} · {cluster.direction}</p>
-                      {cluster.alternatives.map((alternative) => (
-                        <div className="memory-alternative" key={alternative.memoryId}>
-                          <strong>{alternative.categoryName}</strong>
-                          <span>{alternative.reviewedTransactionCount} distinct {alternative.reviewedTransactionCount === 1 ? 'review' : 'reviews'}</span>
-                        </div>
-                      ))}
-                    </details>
+            <>
+              <div className="memory-summary">
+                <strong>{memory.clusters.length} active patterns</strong>
+                <span>{memory.reviews.length} reviewed transactions</span>
+              </div>
+              {memory.clusters.map((cluster) => (
+                <details className="memory-cluster" key={cluster.clusterId}>
+                  <summary>
+                    <span>
+                      {cluster.representativeDescription}
+                      {cluster.representativeSubDescription
+                        ? ` · ${cluster.representativeSubDescription}`
+                        : ''}
+                    </span>
+                    <span>
+                      {cluster.conflicting
+                        ? 'Conflicting alternatives'
+                        : cluster.alternatives[0]?.categoryName}
+                    </span>
+                  </summary>
+                  <p className="subtle">
+                    {cluster.accountType} · {cluster.currency} ·{' '}
+                    {cluster.direction}
+                  </p>
+                  {cluster.alternatives.map((alternative) => (
+                    <div
+                      className="memory-alternative"
+                      key={alternative.memoryId}
+                    >
+                      <strong>{alternative.categoryName}</strong>
+                      <span>
+                        {alternative.reviewedTransactionCount} distinct{' '}
+                        {alternative.reviewedTransactionCount === 1
+                          ? 'review'
+                          : 'reviews'}
+                      </span>
+                    </div>
                   ))}
-                  <h3>Contributing transactions</h3>
-                  <div className="memory-transactions">
-                    {memory.reviews.map((review) => (
-                      <div key={review.transactionId} className="memory-transaction">
-                        <span>
-                          <strong>{review.description}</strong>
-                          <small>
-                            {review.subDescription ? `${review.subDescription} · ` : ''}
-                            {categories.find((category) => category.id === review.categoryId)?.name || review.categoryId}
-                            {review.origin === 'legacy_backfill' ? ' · migrated prior decision' : ''}
-                          </small>
-                        </span>
-                      </div>
-                    ))}
+                </details>
+              ))}
+              <h3>Contributing transactions</h3>
+              <div className="memory-transactions">
+                {memory.reviews.map((review) => (
+                  <div
+                    key={review.transactionId}
+                    className="memory-transaction"
+                  >
+                    <span>
+                      <strong>{review.description}</strong>
+                      <small>
+                        {review.subDescription
+                          ? `${review.subDescription} · `
+                          : ''}
+                        {categories.find(
+                          (category) => category.id === review.categoryId,
+                        )?.name || review.categoryId}
+                        {review.origin === 'legacy_backfill'
+                          ? ' · migrated prior decision'
+                          : ''}
+                      </small>
+                    </span>
                   </div>
-                </>
-              )}
-            </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+    </section>
   );
 }
