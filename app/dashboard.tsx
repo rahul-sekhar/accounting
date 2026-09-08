@@ -43,6 +43,8 @@ import AccountManager, {
 import ImportHistory from './import-history';
 import ImportResults from './import-results';
 import TransactionSelectionToolbar from './transaction-selection-toolbar';
+import MonthlyExpenses from './monthly-expenses';
+import ExpenseSpreadDialog from './expense-spread-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -450,6 +452,9 @@ export default function Dashboard({
     null,
   );
   const [currentImportId, setCurrentImportId] = useState<string | null>(null);
+  const [monthlyPage, setMonthlyPage] = useState(false);
+  const [spreadTransaction, setSpreadTransaction] = useState<Transaction | null>(null);
+  const [spreadOpen, setSpreadOpen] = useState(false);
   const [mappingBusy, setMappingBusy] = useState(false),
     [mappingNote, setMappingNote] = useState('');
   const mappingGate = useRef(new MappingSuggestionGate());
@@ -467,6 +472,7 @@ export default function Dashboard({
       setCurrentImportId(
         params.get('view') === 'import' ? params.get('importId') : null,
       );
+      setMonthlyPage(params.get('view') === 'monthly');
       setLocationRevision((revision) => revision + 1);
     };
     readLocation();
@@ -523,6 +529,7 @@ export default function Dashboard({
   );
   const categoryLabel = (id: string) =>
     data.categories.find((c) => c.id === id)?.name || id;
+  const openSpread = (transaction: Transaction) => { setSpreadTransaction(transaction); setSpreadOpen(true); };
   function changeMapping(value: Mapping) {
     mappingGate.current.invalidate();
     mappingAbort.current?.abort();
@@ -1097,6 +1104,8 @@ export default function Dashboard({
     setError('');
     bulkController.start('categorize', capturedIds);
   }
+  if (monthlyPage)
+    return <><AppNavbar active="monthly" navigationLocked={bulkLocked} /><MonthlyExpenses data={data} onRefresh={refresh} api={api} /></>;
   if (currentImportId)
     return (
       <div className="app-shell">
@@ -1260,7 +1269,12 @@ export default function Dashboard({
                         {transaction.date}
                       </TableCell>
                       <TableCell className="description-cell">
-                        {transaction.description}
+                        <div>{transaction.description}</div>
+                        {transaction.spread_start_month && (
+                          <button className="spread-label" onClick={() => openSpread(transaction)}>
+                            Spread · {transaction.spread_month_count} months
+                          </button>
+                        )}
                       </TableCell>
                       <TableCell className="sub-description-cell">
                         {transaction.sub_description || (
@@ -1584,8 +1598,13 @@ export default function Dashboard({
                             <TableCell className="date-cell">
                               {t.date}
                             </TableCell>
-                            <TableCell className="description-cell">
-                              {t.description}
+                      <TableCell className="description-cell">
+                        <div>{t.description}</div>
+                        {t.spread_start_month && (
+                          <button className="spread-label" onClick={() => openSpread(t)}>
+                            Spread · {t.spread_month_count} months
+                          </button>
+                        )}
                             </TableCell>
                             <TableCell className="sub-description-cell">
                               {t.sub_description || (
@@ -1685,6 +1704,9 @@ export default function Dashboard({
                                       align="end"
                                       className="row-actions-menu"
                                     >
+                                      <DropdownMenuItem onClick={() => openSpread(t)}>
+                                        {t.spread_start_month ? 'Edit spread' : 'Spread across months'}
+                                      </DropdownMenuItem>
                                       <DropdownMenuItem
                                         onClick={() =>
                                           void reviewTransaction(
@@ -2215,6 +2237,18 @@ export default function Dashboard({
           </div>
         </DialogContent>
       </Dialog>
+      <ExpenseSpreadDialog
+        key={spreadTransaction ? `${spreadTransaction.id}-${spreadTransaction.spread_revision}` : 'none'}
+        transaction={spreadTransaction}
+        currency={currency}
+        open={spreadOpen}
+        onOpenChange={setSpreadOpen}
+        onSaved={async (message) => {
+          setNotice(message);
+          await refresh();
+        }}
+        api={api}
+      />
     </div>
   );
 }

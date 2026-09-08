@@ -71,6 +71,9 @@ export type Transaction = {
   has_review: boolean;
   memory_enabled: number | null;
   categorization_evidence: string | null;
+  spread_start_month: string | null;
+  spread_month_count: number | null;
+  spread_revision: number;
 };
 export type CategorizationEvidence = {
   memoryId: string;

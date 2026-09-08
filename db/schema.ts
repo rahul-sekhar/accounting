@@ -39,6 +39,9 @@ export const transactions = sqliteTable(
     confidence: text('confidence'),
     categoryRevision: integer('category_revision').notNull().default(0),
     categorizationEvidence: text('categorization_evidence'),
+    spreadStartMonth: text('spread_start_month'),
+    spreadMonthCount: integer('spread_month_count'),
+    spreadRevision: integer('spread_revision').notNull().default(0),
     createdAt: text('created_at').notNull(),
   },
   (t) => [

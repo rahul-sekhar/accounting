@@ -17,6 +17,10 @@ These plans follow the six-part division approved by the user. Execute them in o
 
 [07 — Workflow gap remediation](07-workflow-gap-remediation.md) was implemented on 2026-09-07. It closes the bulk-operation locking and recovery, cumulative retry totals, filter/selection restoration, and deterministic AI integration/race-test gaps. See the [Plan 7 completion note](07-workflow-gap-remediation-completion.md) for exact evidence and remaining verification boundaries.
 
+## Proposed next feature
+
+[08 — Spread expenses across months](08-spread-expenses-across-months.md) designs editable monthly allocations for insurance, large purchases, and multi-month bills, plus a Monthly expenses report comparing Spread and As paid totals. Status: proposed; design and implementation plan only.
+
 ## Shared implementation rules
 
 Read [Implementation contracts](implementation-contracts.md) before any numbered plan. It resolves endpoint, retry, transaction, and test-harness choices shared across plans. Each numbered plan is a vertically complete change; implement its API, migration, UI, and tests together. Do not leave placeholder endpoints for a later plan.
