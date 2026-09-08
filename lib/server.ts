@@ -1,13 +1,6 @@
 import { getChatGPTUser } from '@/app/chatgpt-auth';
-export class AppError extends Error {
-  constructor(
-    message: string,
-    public status = 400,
-    public code?: string,
-  ) {
-    super(message);
-  }
-}
+export { AppError } from './errors';
+import { AppError } from './errors';
 export async function identity(request?: Request) {
   const user = await getChatGPTUser();
   if (!user) throw new AppError('Please sign in to access your accounts.', 401);

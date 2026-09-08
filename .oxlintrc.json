@@ -33,6 +33,14 @@
     "hooks/use-mobile.ts",
     "next-env.d.ts"
   ],
+  "overrides": [
+    {
+      "files": ["tests/**/*.mjs"],
+      "rules": {
+        "typescript/no-floating-promises": "off"
+      }
+    }
+  ],
   "rules": {
     "no-array-constructor": "error",
     "no-var": "error",

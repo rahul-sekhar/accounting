@@ -1,10 +1,16 @@
-import { getDb } from '@/db';
-import { DEFAULT_CATEGORIES, type CategoryDefinition } from './banking';
+import { DEFAULT_CATEGORIES, type CategoryDefinition } from './banking.ts';
+
+async function runtimeDb() {
+  return (await import('../db/index.ts')).getDb();
+}
+
 export async function getCategories(
   userId: string,
+  database?: D1Database,
 ): Promise<CategoryDefinition[]> {
+  const db = database || (await runtimeDb());
   const overrides = (
-    await getDb()
+    await db
       .prepare(
         'SELECT id,name,kind,archived FROM category_definitions WHERE user_id=? ORDER BY name',
       )

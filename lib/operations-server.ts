@@ -1,4 +1,4 @@
-import { AppError } from './server';
+import { AppError } from './errors.ts';
 
 export type DeleteReceiptResult = {
   operationId: string;
@@ -99,16 +99,21 @@ export async function deleteTransactions(
 
   try {
     await db.batch(statements);
-  } catch (error) {
+  } catch {
     const competing = await readReceipt(db, userId, 'delete', operationId);
     if (competing) return replayDeleteReceipt(competing, requestHash);
-    throw error;
+    throw new AppError(
+      'The deletion was not committed. Your transactions are unchanged.',
+      503,
+      'delete_not_committed',
+    );
   }
   const committed = await readReceipt(db, userId, 'delete', operationId);
   if (!committed)
     throw new AppError(
       'The deletion could not be committed. Refresh and try again.',
-      409,
+      503,
+      'delete_not_committed',
     );
   return {
     ...(JSON.parse(committed.result_json) as DeleteReceiptResult),

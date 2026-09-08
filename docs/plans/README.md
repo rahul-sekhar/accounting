@@ -4,14 +4,18 @@ Implementer: GPT 5.6 Sol (`gpt-5.6-sol`). Project: `/Users/rahul/Documents/ChatG
 
 These plans follow the six-part division approved by the user. Execute them in order, finishing each plan's verification and handoff before starting the next. This directory is a planning deliverable; its creation does not implement or deploy these changes.
 
-| Order | Plan | Result |
-| --- | --- | --- |
-| 1 | [Generic accounts and no balances](01-generic-accounts.md) | Bank-independent account management and transaction-only reporting |
-| 2 | [Imported amount direction](02-amount-direction.md) | Verified AI-to-preview-to-save direction handling |
-| 3 | [Import outcomes and duplicates](03-import-outcomes.md) | Persistent row outcomes and a post-import results page |
-| 4 | [Transaction filters and import view](04-transaction-filters.md) | Combined filters, separate sub-description column, automatic import view |
-| 5 | [Selection and bulk deletion](05-selection-and-deletion.md) | Stable selection across pages and bounded, safe deletion |
-| 6 | [Bulk categorization](06-bulk-categorization.md) | Selection-driven AI categorization with progress and retry handling |
+| Order | Plan                                                             | Result                                                                   |
+| ----- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1     | [Generic accounts and no balances](01-generic-accounts.md)       | Bank-independent account management and transaction-only reporting       |
+| 2     | [Imported amount direction](02-amount-direction.md)              | Verified AI-to-preview-to-save direction handling                        |
+| 3     | [Import outcomes and duplicates](03-import-outcomes.md)          | Persistent row outcomes and a post-import results page                   |
+| 4     | [Transaction filters and import view](04-transaction-filters.md) | Combined filters, separate sub-description column, automatic import view |
+| 5     | [Selection and bulk deletion](05-selection-and-deletion.md)      | Stable selection across pages and bounded, safe deletion                 |
+| 6     | [Bulk categorization](06-bulk-categorization.md)                 | Selection-driven AI categorization with progress and retry handling      |
+
+## Post-implementation remediation
+
+[07 — Workflow gap remediation](07-workflow-gap-remediation.md) was implemented on 2026-09-07. It closes the bulk-operation locking and recovery, cumulative retry totals, filter/selection restoration, and deterministic AI integration/race-test gaps. See the [Plan 7 completion note](07-workflow-gap-remediation-completion.md) for exact evidence and remaining verification boundaries.
 
 ## Shared implementation rules
 
@@ -40,18 +44,18 @@ Read [Implementation contracts](implementation-contracts.md) before any numbered
 
 ## Requirement coverage
 
-| User request | Owning plan |
-| --- | --- |
-| Sub-description field in table | 04 |
-| AI amount-direction check | 02 |
-| Generic bank support | 01 |
-| Remove balances | 01 |
-| Post-import duplicate/actions page | 03, integrated table in 04 |
-| Filter by import and automatically show it | 04, using provenance from 03 |
-| Selection and delete across all filtered pages | 05 |
-| Replace auto-categorization box with bulk operation | 06 |
-| Manage accounts | 01 |
-| Search, direction, amount, category, account, date filters | 04 |
+| User request                                               | Owning plan                  |
+| ---------------------------------------------------------- | ---------------------------- |
+| Sub-description field in table                             | 04                           |
+| AI amount-direction check                                  | 02                           |
+| Generic bank support                                       | 01                           |
+| Remove balances                                            | 01                           |
+| Post-import duplicate/actions page                         | 03, integrated table in 04   |
+| Filter by import and automatically show it                 | 04, using provenance from 03 |
+| Selection and delete across all filtered pages             | 05                           |
+| Replace auto-categorization box with bulk operation        | 06                           |
+| Manage accounts                                            | 01                           |
+| Search, direction, amount, category, account, date filters | 04                           |
 
 ## Verification and handoff
 

@@ -1,15 +1,12 @@
 'use client';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import { isCategorizationEligible } from '@/lib/transaction-categorization';
 import {
-  beginCategorizeProgress,
-  categorizeBatches,
-  categorizeRequestKey,
-  commitCategorizeBatch,
-  haltCategorizeProgress,
-  isCategorizationEligible,
-  type CategorizeProgress,
-} from '@/lib/transaction-categorization';
+  BulkOperationController,
+  type BulkOperation,
+  type BulkOutcome,
+} from '@/lib/bulk-operation';
 import {
   WalletCards,
   Upload,
@@ -42,9 +39,7 @@ import AccountManager, {
 } from './account-manager';
 import ImportHistory from './import-history';
 import ImportResults from './import-results';
-import TransactionSelectionToolbar, {
-  type DeleteOperationView,
-} from './transaction-selection-toolbar';
+import TransactionSelectionToolbar from './transaction-selection-toolbar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -95,17 +90,14 @@ import {
 import {
   DEFAULT_TRANSACTION_FILTERS,
   filterTransactions,
-  filtersFromSearchParams,
+  filtersForLocation,
   filtersToSearchParams,
+  transactionFiltersEqual,
   type FilterErrors,
   type TransactionFilters,
 } from '@/lib/transaction-filters';
 import {
-  beginDeleteProgress,
   captureMatchingTransactions,
-  commitDeleteBatch,
-  deleteBatches,
-  haltDeleteProgress,
   intersectTransactionSelection,
   pageSelectionState,
   toggleTransaction,
@@ -125,25 +117,64 @@ async function api<T = Record<string, unknown>>(
   payload?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  const r = await fetch(`/api/${path}`, {
-    method,
-    headers: payload ? { 'Content-Type': 'application/json' } : undefined,
-    ...(payload ? { body: JSON.stringify(payload) } : {}),
-    signal,
-  });
+  let r: Response;
+  try {
+    r = await fetch(`/api/${path}`, {
+      method,
+      headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
+      signal,
+    });
+  } catch (cause) {
+    const error = new Error(
+      signal?.aborted
+        ? 'The request was stopped.'
+        : 'The response was lost. Recover the sent batch before continuing.',
+      { cause },
+    ) as Error & { certainty?: 'unresolved' };
+    error.certainty = 'unresolved';
+    throw error;
+  }
   let result;
   try {
     result = await r.json();
   } catch {
-    throw new Error('Could not reach your workspace. Please reload.');
+    const error = new Error(
+      r.ok
+        ? 'The server response was incomplete. Recover the sent batch before continuing.'
+        : 'The server response could not be verified. Recover the sent batch before continuing.',
+    ) as Error & { status?: number; certainty?: 'unresolved' };
+    error.status = r.status;
+    error.certainty = 'unresolved';
+    throw error;
   }
   if (!r.ok) {
     const error = new Error(
       (result as { error?: string }).error ||
         'Something went wrong. Please try again.',
-    ) as Error & { status?: number; code?: string };
+    ) as Error & {
+      status?: number;
+      code?: string;
+      certainty?: 'unresolved' | 'precommit';
+    };
     error.status = r.status;
     error.code = (result as { code?: string }).code;
+    const knownPrecommit = new Set([
+      'stale_context',
+      'operation_conflict',
+      'provider_not_configured',
+      'provider_transport',
+      'provider_rate_limit',
+      'provider_auth',
+      'provider_unavailable',
+      'provider_output',
+      'delete_not_committed',
+    ]);
+    error.certainty =
+      knownPrecommit.has(error.code || '') ||
+      (r.status >= 400 && r.status < 500)
+        ? 'precommit'
+        : 'unresolved';
     throw error;
   }
   return result as T;
@@ -379,16 +410,32 @@ export default function Dashboard() {
     filtersRef.current = filters;
   }, [filters]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [deleteOperation, setDeleteOperation] =
-    useState<DeleteOperationView | null>(null);
+  const selectedIdsRef = useRef(selectedIds);
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+  const [bulkOperation, setBulkOperation] = useState<BulkOperation | null>(
+    null,
+  );
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const stopDelete = useRef(false);
-  const pendingDeleteOperations = useRef(new Map<string, string>());
-  const [categorizeOperation, setCategorizeOperation] =
-    useState<CategorizeProgress | null>(null);
   const [categorizeConfirmOpen, setCategorizeConfirmOpen] = useState(false);
-  const stopCategorize = useRef(false);
-  const pendingCategorizeOperations = useRef(new Map<string, string>());
+  const [bulkController] = useState(
+    () =>
+      new BulkOperationController({
+        request: async () => {
+          throw new Error('Bulk operations are still initializing.');
+        },
+        normalize: () => {
+          throw new Error('Bulk operations are still initializing.');
+        },
+        refresh: async () => {},
+        committed: () => {},
+        changed: () => {},
+        uuid: () => crypto.randomUUID(),
+      }),
+  );
+  const bulkLockedRef = useRef(false);
+  const deferredLocation = useRef<string | null>(null);
   const [manageCategories, setManageCategories] = useState(false);
   const pendingReviewOperations = useRef(new Map<string, string>());
   const pendingImportOperation = useRef<{ key: string; id: string } | null>(
@@ -401,6 +448,13 @@ export default function Dashboard() {
   const mappingAbort = useRef<AbortController | null>(null);
   useEffect(() => {
     const readLocation = () => {
+      if (bulkLockedRef.current) {
+        deferredLocation.current = window.location.href;
+        setNotice(
+          'Navigation will be applied after the sent bulk operation is resolved.',
+        );
+        return;
+      }
       const params = new URLSearchParams(window.location.search);
       setCurrentImportId(
         params.get('view') === 'import' ? params.get('importId') : null,
@@ -412,18 +466,12 @@ export default function Dashboard() {
     return () => window.removeEventListener('popstate', readLocation);
   }, []);
   const currency = filters.currency;
+  const bulkLocked =
+    bulkOperation?.status === 'running' ||
+    bulkOperation?.status === 'unresolved';
   const updateFilters = useCallback(
     (change: Partial<TransactionFilters>, message = '') => {
-      if (busy === 'delete' || busy === 'ai') return;
-      setDeleteOperation(null);
-      setCategorizeOperation(null);
-      if (selectedIds.size) {
-        setSelectedIds(new Set());
-        setDeleteOperation(null);
-        message = [message, 'Selection cleared because the filters changed.']
-          .filter(Boolean)
-          .join(' ');
-      }
+      if (bulkLockedRef.current) return;
       setFilters((current) => {
         const next = { ...current, ...change };
         if (
@@ -446,6 +494,13 @@ export default function Dashboard() {
           if (group && change.account !== group.account_id)
             next.importGroup = '';
         }
+        if (transactionFiltersEqual(current, next)) return current;
+        if (selectedIds.size) {
+          setSelectedIds(new Set());
+          message = [message, 'Selection cleared because the filters changed.']
+            .filter(Boolean)
+            .join(' ');
+        }
         const params = filtersToSearchParams(
           next,
           new URLSearchParams(window.location.search),
@@ -456,7 +511,7 @@ export default function Dashboard() {
       setPage(0);
       if (message) setNotice(message);
     },
-    [busy, data.imports, selectedIds.size],
+    [data.imports, selectedIds.size],
   );
   const categoryLabel = (id: string) =>
     data.categories.find((c) => c.id === id)?.name || id;
@@ -594,21 +649,28 @@ export default function Dashboard() {
     if (loading) return;
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
-      if (
-        params.get('view') === 'import' &&
-        params.get('importId') &&
-        !params.get('importGroup')
-      )
-        params.set('importGroup', params.get('importId')!);
-      const parsed = filtersFromSearchParams(
+      const parsed = filtersForLocation(
         params,
         data.accounts,
         data.imports,
         data.categories.map((category) => category.id),
       );
-      setFilters(parsed.filters);
-      setPage(0);
-      if (parsed.notice) setNotice(parsed.notice);
+      const changed = !transactionFiltersEqual(
+        filtersRef.current,
+        parsed.filters,
+      );
+      if (changed && selectedIdsRef.current.size) {
+        setSelectedIds(new Set());
+        setNotice(
+          [parsed.notice, 'Selection cleared because the filters changed.']
+            .filter(Boolean)
+            .join(' '),
+        );
+      } else if (parsed.notice) setNotice(parsed.notice);
+      if (changed) {
+        setFilters(parsed.filters);
+        setPage(0);
+      }
       const normalized = filtersToSearchParams(parsed.filters, params);
       if (
         normalized.toString() !==
@@ -686,79 +748,115 @@ export default function Dashboard() {
       return `${colors[i % colors.length]} ${start}% ${start + (s.amount / spendingTotal) * 100}%`;
     })
     .join(',');
-  async function runDeletion(capturedIds: readonly string[]) {
-    const captured = [...capturedIds];
-    const batches = deleteBatches(captured);
-    let progress = beginDeleteProgress(captured);
-    stopDelete.current = false;
-    setDeleteConfirmOpen(false);
-    setBusy('delete');
-    setError('');
-    setDeleteOperation(progress);
-    for (let index = 0; index < batches.length; index++) {
-      if (stopDelete.current) {
-        progress = haltDeleteProgress(progress, 'stopped');
-        setDeleteOperation(progress);
-        setBusy('');
-        return;
+  const controllerHandlers = {
+    request: (kind: 'delete' | 'categorize', payload: unknown) =>
+      api(
+        kind === 'delete' ? 'transactions/delete' : 'categorize',
+        'POST',
+        payload,
+      ),
+    normalize: (
+      kind: 'delete' | 'categorize',
+      ids: readonly string[],
+      rawResult: unknown,
+    ): BulkOutcome => {
+      const result = rawResult as Record<string, unknown>;
+      const lists =
+        kind === 'delete'
+          ? [result.deletedIds, result.unavailableIds]
+          : [result.categorizedIds, result.protectedIds, result.unavailableIds];
+      if (lists.some((list) => !Array.isArray(list))) {
+        const error = new Error(
+          'The success response was incomplete. Recover the sent batch before continuing.',
+        ) as Error & { certainty?: 'unresolved' };
+        error.certainty = 'unresolved';
+        throw error;
       }
-      const ids = batches[index];
-      const key = JSON.stringify([...ids].sort());
-      const operationId =
-        pendingDeleteOperations.current.get(key) || crypto.randomUUID();
-      pendingDeleteOperations.current.set(key, operationId);
-      try {
-        const result = await api<{
-          deletedIds: string[];
-          unavailableIds: string[];
-        }>('transactions/delete', 'POST', { operationId, ids });
-        pendingDeleteOperations.current.delete(key);
-        progress = commitDeleteBatch(progress, ids, result);
-        setSelectedIds((current) => {
-          const next = new Set(current);
-          for (const id of ids) next.delete(id);
-          return next;
-        });
+      const outcomes = lists.flat() as string[];
+      if (
+        outcomes.length !== ids.length ||
+        new Set(outcomes).size !== outcomes.length ||
+        outcomes.some((id) => !ids.includes(id))
+      ) {
+        const error = new Error(
+          'The success response did not account for every transaction. Recover the sent batch before continuing.',
+        ) as Error & { certainty?: 'unresolved' };
+        error.certainty = 'unresolved';
+        throw error;
+      }
+      const deletedIds = (result.deletedIds as string[] | undefined) || [];
+      const categorizedIds =
+        (result.categorizedIds as string[] | undefined) || [];
+      const protectedIds = (result.protectedIds as string[] | undefined) || [];
+      const unavailableIds = (result.unavailableIds as string[]) || [];
+      return {
+        resolvedIds: outcomes,
+        deletedIds,
+        categorizedIds,
+        protectedIds,
+        unavailableIds,
+        deleted: deletedIds.length,
+        categorized: categorizedIds.length,
+        protected: protectedIds.length,
+        unavailable: unavailableIds.length,
+      };
+    },
+    refresh,
+    committed: (
+      kind: 'delete' | 'categorize',
+      ids: readonly string[],
+      outcome: BulkOutcome,
+    ) => {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+      if (kind === 'delete' && outcome.deletedIds?.length)
         setData((current) => ({
           ...current,
           transactions: current.transactions.filter(
-            (transaction) => !result.deletedIds.includes(transaction.id),
+            (transaction) => !outcome.deletedIds!.includes(transaction.id),
           ),
         }));
-        setDeleteOperation(progress);
-      } catch (caught) {
-        progress = haltDeleteProgress(
-          progress,
-          'failed',
-          (caught as Error).message,
+    },
+    changed: (operation: BulkOperation | null) => {
+      const locked =
+        operation?.status === 'running' || operation?.status === 'unresolved';
+      bulkLockedRef.current = locked;
+      setBulkOperation(operation);
+      if (operation?.status === 'completed')
+        setNotice(
+          operation.kind === 'delete'
+            ? `${operation.deleted} transaction${operation.deleted === 1 ? '' : 's'} deleted.${operation.unavailable ? ` ${operation.unavailable} ${operation.unavailable === 1 ? 'was' : 'were'} already unavailable.` : ''} Import and review history was kept.`
+            : `${operation.categorized} transaction${operation.categorized === 1 ? '' : 's'} categorized.${operation.protected ? ` ${operation.protected} protected ${operation.protected === 1 ? 'transaction was' : 'transactions were'} skipped.` : ''}${operation.unavailable ? ` ${operation.unavailable} ${operation.unavailable === 1 ? 'was' : 'were'} unavailable.` : ''} Review AI suggestions before accepting them.`,
         );
-        setDeleteOperation(progress);
-        return;
+      if (!locked && deferredLocation.current) {
+        deferredLocation.current = null;
+        const params = new URLSearchParams(window.location.search);
+        setCurrentImportId(
+          params.get('view') === 'import' ? params.get('importId') : null,
+        );
+        setLocationRevision((revision) => revision + 1);
       }
-    }
-    setDeleteOperation(progress);
-    setBusy('');
-    setNotice(
-      `${progress.deleted} transaction${progress.deleted === 1 ? '' : 's'} deleted.${
-        progress.unavailable
-          ? ` ${progress.unavailable} ${progress.unavailable === 1 ? 'was' : 'were'} already unavailable.`
-          : ''
-      } Import and review history was kept.`,
-    );
-    await refresh().catch((caught) => setError((caught as Error).message));
+    },
+    uuid: () => crypto.randomUUID(),
+  };
+  useEffect(() => {
+    bulkController.setHandlers(controllerHandlers);
+  });
+
+  function runDeletion(capturedIds: readonly string[]) {
+    setDeleteConfirmOpen(false);
+    setError('');
+    bulkController.start('delete', capturedIds);
   }
   function selectedInFilterOrder() {
     return filteredIds.filter((id) => selectedIds.has(id));
   }
   function editSelection(update: (current: Set<string>) => Set<string>) {
-    if (busy === 'delete' || busy === 'ai') return;
+    if (bulkLockedRef.current) return;
     setSelectedIds(update);
-    setDeleteOperation((current) =>
-      current?.status === 'stopped' ? null : current,
-    );
-    setCategorizeOperation((current) =>
-      current?.status === 'stopped' ? null : current,
-    );
   }
   async function reviewTransaction(
     transaction: Transaction,
@@ -766,6 +864,7 @@ export default function Dashboard() {
     action: 'correct' | 'confirm' | 'memory_enable' | 'memory_disable',
     learn: boolean,
   ) {
+    if (bulkLockedRef.current) return;
     setError('');
     setBusy('category');
     const operationKey = `${transaction.id}:${category}:${action}:${learn}:${transaction.category_revision}`;
@@ -868,6 +967,10 @@ export default function Dashboard() {
                 Object.keys(input).length
               )
                 throw new Error('Expected an empty object.');
+              if (bulkLockedRef.current)
+                throw new Error(
+                  'Finish recovering the current bulk operation before importing.',
+                );
               setShowImport(true);
               return { opened: true, saved: false };
             },
@@ -879,7 +982,7 @@ export default function Dashboard() {
     return () => lifecycle.abort();
   }, []);
   async function loadFile(file?: File) {
-    if (busy) return;
+    if (busy || bulkLockedRef.current) return;
     invalidateMappingSuggestion();
     const run = mappingGate.current.begin();
     setMappingNote('');
@@ -909,6 +1012,7 @@ export default function Dashboard() {
     }
   }
   function startImport(account?: Account) {
+    if (busy || bulkLockedRef.current) return;
     invalidateMappingSuggestion();
     setMappingNote('');
     setImportError('');
@@ -933,6 +1037,7 @@ export default function Dashboard() {
     setShowImport(true);
   }
   async function saveImport() {
+    if (bulkLockedRef.current) return;
     setBusy('import');
     setImportError('');
     try {
@@ -980,65 +1085,23 @@ export default function Dashboard() {
       setBusy('');
     }
   }
-  async function categorize(capturedIds: readonly string[]) {
-    const captured = [...capturedIds];
-    const batches = categorizeBatches(captured);
-    let progress = beginCategorizeProgress(captured);
-    stopCategorize.current = false;
+  function categorize(capturedIds: readonly string[]) {
     setCategorizeConfirmOpen(false);
-    setDeleteOperation(null);
-    setBusy('ai');
     setError('');
-    setCategorizeOperation(progress);
-    for (const ids of batches) {
-      if (stopCategorize.current) {
-        progress = haltCategorizeProgress(progress, 'stopped');
-        setCategorizeOperation(progress);
-        setBusy('');
-        return;
-      }
-      const key = categorizeRequestKey(ids);
-      const operationId =
-        pendingCategorizeOperations.current.get(key) || crypto.randomUUID();
-      pendingCategorizeOperations.current.set(key, operationId);
-      try {
-        const result = await api<{
-          categorizedIds: string[];
-          protectedIds: string[];
-          unavailableIds: string[];
-        }>('categorize', 'POST', { operationId, ids });
-        pendingCategorizeOperations.current.delete(key);
-        progress = commitCategorizeBatch(progress, ids, result);
-        setSelectedIds((current) => {
-          const next = new Set(current);
-          for (const id of ids) next.delete(id);
-          return next;
-        });
-        setCategorizeOperation(progress);
-        await refresh();
-      } catch (caught) {
-        const apiError = caught as Error & { code?: string };
-        if (apiError.code === 'stale_context') {
-          pendingCategorizeOperations.current.delete(key);
-          await refresh().catch(() => undefined);
-        }
-        progress = haltCategorizeProgress(progress, 'failed', apiError.message);
-        setCategorizeOperation(progress);
-        setBusy('');
-        return;
-      }
-    }
-    setBusy('');
-    setCategorizeOperation(progress);
-    setNotice(
-      `${progress.categorized} transaction${progress.categorized === 1 ? '' : 's'} categorized.${progress.protected ? ` ${progress.protected} protected ${progress.protected === 1 ? 'transaction was' : 'transactions were'} skipped.` : ''}${progress.unavailable ? ` ${progress.unavailable} ${progress.unavailable === 1 ? 'was' : 'were'} unavailable.` : ''} Review AI suggestions before accepting them.`,
-    );
+    bulkController.start('categorize', capturedIds);
   }
   if (currentImportId)
     return (
       <div className="app-shell">
         <header className="topbar">
-          <Link className="brand" href="/?view=transactions">
+          <Link
+            className="brand"
+            href="/?view=transactions"
+            aria-disabled={bulkLocked}
+            onClick={(event) => {
+              if (bulkLocked) event.preventDefault();
+            }}
+          >
             <WalletCards size={26} /> account<span>view</span>
           </Link>
           <div className="top-right">
@@ -1055,7 +1118,7 @@ export default function Dashboard() {
             </a>
           </div>
         </header>
-        <ImportResults importId={currentImportId}>
+        <ImportResults importId={currentImportId} navigationLocked={bulkLocked}>
           <section className="section transaction-panel import-transaction-panel">
             {error && (
               <div className="message error" role="alert">
@@ -1077,19 +1140,22 @@ export default function Dashboard() {
             <div className="transaction-heading">
               <div>
                 <h2>
-                  New transactions{' '}
+                  {filters.importGroup === currentImportId
+                    ? 'New transactions '
+                    : 'Transactions '}
                   <span className="count">{visible.length}</span>
                 </h2>
                 <p className="subtle">
-                  Transactions added by this import and still available.
+                  {filters.importGroup === currentImportId
+                    ? 'Transactions added by this import and still available.'
+                    : 'The historical import report remains open; the table follows your current filters.'}
                 </p>
               </div>
               <div className="results-table-actions">
                 <button
                   className="secondary"
                   disabled={
-                    busy === 'delete' ||
-                    busy === 'ai' ||
+                    bulkLocked ||
                     JSON.stringify(filters) ===
                       JSON.stringify({
                         ...DEFAULT_TRANSACTION_FILTERS,
@@ -1105,13 +1171,17 @@ export default function Dashboard() {
                 <Link
                   className="secondary-link"
                   href={`/?${filtersToSearchParams(filters, new URLSearchParams({ view: 'transactions' })).toString()}`}
+                  aria-disabled={bulkLocked}
+                  onClick={(event) => {
+                    if (bulkLocked) event.preventDefault();
+                  }}
                 >
                   Open full transaction view
                 </Link>
               </div>
             </div>
             <TransactionFilterControls
-              disabled={busy === 'delete' || busy === 'ai'}
+              disabled={bulkLocked}
               filters={filters}
               errors={filterErrors}
               data={data}
@@ -1130,8 +1200,7 @@ export default function Dashboard() {
               protectedCount={protectedSelected}
               rerunCount={rerunSelected}
               aiReady={data.aiReady}
-              deleteOperation={deleteOperation}
-              categorizeOperation={categorizeOperation}
+              operation={bulkOperation}
               deleteConfirmOpen={deleteConfirmOpen}
               categorizeConfirmOpen={categorizeConfirmOpen}
               onDeleteConfirmOpenChange={setDeleteConfirmOpen}
@@ -1141,23 +1210,14 @@ export default function Dashboard() {
               }
               onClear={() => {
                 setSelectedIds(new Set());
-                setDeleteOperation(null);
               }}
-              onDelete={() => void runDeletion(selectedInFilterOrder())}
-              onCategorize={() => void categorize(selectedInFilterOrder())}
-              onStopDelete={() => {
-                stopDelete.current = true;
-              }}
-              onStopCategorize={() => {
-                stopCategorize.current = true;
-              }}
-              onRetryDelete={() =>
-                deleteOperation && void runDeletion(deleteOperation.remaining)
-              }
-              onRetryCategorize={() =>
-                categorizeOperation &&
-                void categorize(categorizeOperation.remaining)
-              }
+              onDelete={() => runDeletion(selectedInFilterOrder())}
+              onCategorize={() => categorize(selectedInFilterOrder())}
+              onStop={() => bulkController.stop()}
+              onRetry={() => void bulkController.resume()}
+              onRecover={() => bulkController.recover()}
+              onRetryRefresh={() => bulkController.retryRefresh()}
+              onAbandon={() => bulkController.abandon()}
             />
             <Table>
               <TableHeader>
@@ -1167,9 +1227,7 @@ export default function Dashboard() {
                       aria-label="Select all transactions on this page"
                       checked={pageSelection.checked}
                       indeterminate={pageSelection.indeterminate}
-                      disabled={
-                        busy === 'delete' || busy === 'ai' || !pageIds.length
-                      }
+                      disabled={bulkLocked || !pageIds.length}
                       onCheckedChange={(checked) =>
                         editSelection((current) =>
                           toggleTransactionPage(
@@ -1196,7 +1254,7 @@ export default function Dashboard() {
                       <Checkbox
                         aria-label={`Select ${transaction.description} on ${transaction.date}`}
                         checked={selectedIds.has(transaction.id)}
-                        disabled={busy === 'delete' || busy === 'ai'}
+                        disabled={bulkLocked}
                         onCheckedChange={(checked) =>
                           editSelection((current) =>
                             toggleTransaction(
@@ -1286,7 +1344,7 @@ export default function Dashboard() {
         <div className="top-right">
           <button
             className="text-button"
-            disabled={loading || !!busy}
+            disabled={loading || !!busy || bulkLocked}
             onClick={() => setManageCategories(true)}
           >
             Categories
@@ -1316,7 +1374,7 @@ export default function Dashboard() {
           <button
             className="primary"
             onClick={() => startImport()}
-            disabled={loading || !!busy}
+            disabled={loading || !!busy || bulkLocked}
           >
             <Upload size={17} /> Import CSV
           </button>
@@ -1354,7 +1412,7 @@ export default function Dashboard() {
           <Picker
             label="Currency"
             value={currency}
-            disabled={busy === 'delete' || busy === 'ai'}
+            disabled={bulkLocked}
             onChange={(v) => {
               updateFilters(
                 { currency: v },
@@ -1396,7 +1454,7 @@ export default function Dashboard() {
               ...data.imports.map((record) => record.account_id),
             ])
           }
-          busy={loading || !!busy}
+          busy={loading || !!busy || bulkLocked}
           request={(method, payload) => api('account', method, payload)}
           onChanged={refresh}
           onImport={startImport}
@@ -1501,7 +1559,7 @@ export default function Dashboard() {
                 {reviewCount > 0 && (
                   <button
                     className="review-link"
-                    disabled={busy === 'delete' || busy === 'ai'}
+                    disabled={bulkLocked}
                     onClick={() => updateFilters({ category: 'review' })}
                   >
                     {reviewCount} transactions to review{' '}
@@ -1511,8 +1569,7 @@ export default function Dashboard() {
                 <button
                   className="secondary"
                   disabled={
-                    busy === 'delete' ||
-                    busy === 'ai' ||
+                    bulkLocked ||
                     JSON.stringify(filters) ===
                       JSON.stringify({
                         ...DEFAULT_TRANSACTION_FILTERS,
@@ -1527,7 +1584,7 @@ export default function Dashboard() {
                 </button>
               </div>
               <TransactionFilterControls
-                disabled={busy === 'delete' || busy === 'ai'}
+                disabled={bulkLocked}
                 filters={filters}
                 errors={filterErrors}
                 data={data}
@@ -1546,8 +1603,7 @@ export default function Dashboard() {
                 protectedCount={protectedSelected}
                 rerunCount={rerunSelected}
                 aiReady={data.aiReady}
-                deleteOperation={deleteOperation}
-                categorizeOperation={categorizeOperation}
+                operation={bulkOperation}
                 deleteConfirmOpen={deleteConfirmOpen}
                 categorizeConfirmOpen={categorizeConfirmOpen}
                 onDeleteConfirmOpenChange={setDeleteConfirmOpen}
@@ -1557,23 +1613,14 @@ export default function Dashboard() {
                 }
                 onClear={() => {
                   setSelectedIds(new Set());
-                  setDeleteOperation(null);
                 }}
-                onDelete={() => void runDeletion(selectedInFilterOrder())}
-                onCategorize={() => void categorize(selectedInFilterOrder())}
-                onStopDelete={() => {
-                  stopDelete.current = true;
-                }}
-                onStopCategorize={() => {
-                  stopCategorize.current = true;
-                }}
-                onRetryDelete={() =>
-                  deleteOperation && void runDeletion(deleteOperation.remaining)
-                }
-                onRetryCategorize={() =>
-                  categorizeOperation &&
-                  void categorize(categorizeOperation.remaining)
-                }
+                onDelete={() => runDeletion(selectedInFilterOrder())}
+                onCategorize={() => categorize(selectedInFilterOrder())}
+                onStop={() => bulkController.stop()}
+                onRetry={() => void bulkController.resume()}
+                onRecover={() => bulkController.recover()}
+                onRetryRefresh={() => bulkController.retryRefresh()}
+                onAbandon={() => bulkController.abandon()}
               />
               <Table>
                 <TableHeader>
@@ -1583,9 +1630,7 @@ export default function Dashboard() {
                         aria-label="Select all transactions on this page"
                         checked={pageSelection.checked}
                         indeterminate={pageSelection.indeterminate}
-                        disabled={
-                          busy === 'delete' || busy === 'ai' || !pageIds.length
-                        }
+                        disabled={bulkLocked || !pageIds.length}
                         onCheckedChange={(checked) =>
                           editSelection((current) =>
                             toggleTransactionPage(
@@ -1612,7 +1657,7 @@ export default function Dashboard() {
                         <Checkbox
                           aria-label={`Select ${t.description} on ${t.date}`}
                           checked={selectedIds.has(t.id)}
-                          disabled={busy === 'delete' || busy === 'ai'}
+                          disabled={bulkLocked}
                           onCheckedChange={(checked) =>
                             editSelection((current) =>
                               toggleTransaction(
@@ -1645,7 +1690,7 @@ export default function Dashboard() {
                             <NativeSelect
                               value={t.category}
                               aria-label={`Category for ${t.description} on ${t.date}`}
-                              disabled={!!busy}
+                              disabled={!!busy || bulkLocked}
                               onChange={(e) => {
                                 const next = e.target.value as Category;
                                 void reviewTransaction(
@@ -1712,7 +1757,7 @@ export default function Dashboard() {
                               <DropdownMenuTrigger
                                 className="row-menu-trigger"
                                 aria-label={`Actions for ${t.description} on ${t.date}`}
-                                disabled={!!busy}
+                                disabled={!!busy || bulkLocked}
                               >
                                 <MoreHorizontal size={17} />
                               </DropdownMenuTrigger>
@@ -1811,7 +1856,7 @@ export default function Dashboard() {
             </section>
           </>
         )}
-        <ImportHistory initial={data.imports} />
+        <ImportHistory initial={data.imports} navigationLocked={bulkLocked} />
         <footer className="page-footer">
           <ShieldCheck size={14} />
           <span>
@@ -1823,7 +1868,7 @@ export default function Dashboard() {
       <Dialog
         open={showImport}
         onOpenChange={(v) => {
-          if (busy !== 'import') {
+          if (busy !== 'import' && !bulkLocked) {
             setShowImport(v);
             if (!v) {
               invalidateMappingSuggestion();
@@ -1874,7 +1919,7 @@ export default function Dashboard() {
                 type="file"
                 accept=".csv,text/csv"
                 onChange={(e) => void loadFile(e.target.files?.[0])}
-                disabled={!!busy}
+                disabled={!!busy || bulkLocked}
               />
             </label>
             {csv && mapping && (
@@ -2073,7 +2118,7 @@ export default function Dashboard() {
                 invalidateMappingSuggestion();
                 setShowImport(false);
               }}
-              disabled={!!busy}
+              disabled={!!busy || bulkLocked}
             >
               Cancel
             </button>
@@ -2082,6 +2127,7 @@ export default function Dashboard() {
               onClick={saveImport}
               disabled={
                 !!busy ||
+                bulkLocked ||
                 mappingBusy ||
                 !preview?.transactions.length ||
                 !!preview?.errors.length ||

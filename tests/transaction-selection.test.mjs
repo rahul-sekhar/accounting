@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  beginDeleteProgress,
   captureMatchingTransactions,
-  commitDeleteBatch,
   deleteBatches,
-  haltDeleteProgress,
   intersectTransactionSelection,
   pageSelectionState,
   toggleTransaction,
@@ -58,30 +55,4 @@ test('captured deletion is split into conservative sequential batches', () => {
     [50, 50, 21],
   );
   assert.deepEqual(deleteBatches(ids).flat(), ids);
-});
-
-test('a later batch failure preserves committed progress and retry scope', () => {
-  const ids = Array.from({ length: 80 }, (_, index) => `t-${index + 1}`);
-  const [first, second] = deleteBatches(ids);
-  let progress = beginDeleteProgress(ids);
-  progress = commitDeleteBatch(progress, first, {
-    deletedIds: first.slice(0, 49),
-    unavailableIds: first.slice(49),
-  });
-  assert.equal(progress.processed, 50);
-  assert.equal(progress.deleted, 49);
-  assert.equal(progress.unavailable, 1);
-  assert.deepEqual(progress.remaining, second);
-  progress = haltDeleteProgress(progress, 'failed', 'Network response lost.');
-  assert.equal(progress.status, 'failed');
-  assert.deepEqual(progress.remaining, second);
-
-  let retry = beginDeleteProgress(progress.remaining);
-  retry = commitDeleteBatch(retry, second, {
-    deletedIds: second,
-    unavailableIds: [],
-  });
-  assert.equal(retry.status, 'completed');
-  assert.equal(retry.processed, 30);
-  assert.deepEqual(retry.remaining, []);
 });

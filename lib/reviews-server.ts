@@ -1,7 +1,6 @@
-import { getDb } from '@/db';
-import { getCategories } from './categories-server';
-import { AppError } from './server';
-import type { ReviewMemoryRow } from './review-memory';
+import { getCategories } from './categories-server.ts';
+import { AppError } from './errors.ts';
+import type { ReviewMemoryRow } from './review-memory.ts';
 
 type TransactionSnapshot = {
   id: string;
@@ -18,16 +17,28 @@ type TransactionSnapshot = {
   memory_enabled: number | null;
 };
 
-export async function getContextRevision(userId: string) {
-  const row = await getDb()
+async function runtimeDb() {
+  return (await import('../db/index.ts')).getDb();
+}
+
+export async function getContextRevision(
+  userId: string,
+  database?: D1Database,
+) {
+  const db = database || (await runtimeDb());
+  const row = await db
     .prepare('SELECT revision FROM categorization_contexts WHERE user_id=?')
     .bind(userId)
     .first<{ revision: number }>();
   return row?.revision || 0;
 }
 
-export async function loadReviewRows(userId: string, pageSize = 500) {
-  const db = getDb();
+export async function loadReviewRows(
+  userId: string,
+  pageSize = 500,
+  database?: D1Database,
+) {
+  const db = database || (await runtimeDb());
   const rows: ReviewMemoryRow[] = [];
   let after = '';
   while (true) {
@@ -98,8 +109,9 @@ export async function saveReview(
     operationId: string;
     expectedRevision: number;
   },
+  database?: D1Database,
 ) {
-  const db = getDb();
+  const db = database || (await runtimeDb());
   const inputHash = reviewInput({
     transactionId: input.id,
     category: input.category,
@@ -160,7 +172,7 @@ export async function saveReview(
     input.category !== row.category
   )
     throw new AppError('The category changed. Refresh and try again.', 409);
-  const categories = await getCategories(userId);
+  const categories = await getCategories(userId, db);
   const category = categories.find((item) => item.id === input.category);
   if (!category || (category.archived && input.category !== row.category))
     throw new AppError('Choose a valid category.');
@@ -291,8 +303,12 @@ export async function saveReview(
   };
 }
 
-export async function backfillLegacyReviews(userId: string, limit = 50) {
-  const db = getDb();
+export async function backfillLegacyReviews(
+  userId: string,
+  limit = 50,
+  database?: D1Database,
+) {
+  const db = database || (await runtimeDb());
   const rows = (
     await db
       .prepare(

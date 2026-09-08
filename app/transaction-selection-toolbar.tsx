@@ -11,17 +11,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Progress } from '@/components/ui/progress';
-import type { CategorizeProgress } from '@/lib/transaction-categorization';
-
-export type DeleteOperationView = {
-  status: 'running' | 'completed' | 'stopped' | 'failed';
-  total: number;
-  processed: number;
-  deleted: number;
-  unavailable: number;
-  remaining: string[];
-  error?: string;
-};
+import type { BulkOperation } from '@/lib/bulk-operation';
 
 type Props = {
   selectedCount: number;
@@ -30,8 +20,7 @@ type Props = {
   protectedCount: number;
   rerunCount: number;
   aiReady: boolean;
-  deleteOperation: DeleteOperationView | null;
-  categorizeOperation: CategorizeProgress | null;
+  operation: BulkOperation | null;
   deleteConfirmOpen: boolean;
   categorizeConfirmOpen: boolean;
   onDeleteConfirmOpenChange: (open: boolean) => void;
@@ -40,10 +29,11 @@ type Props = {
   onClear: () => void;
   onDelete: () => void;
   onCategorize: () => void;
-  onStopDelete: () => void;
-  onStopCategorize: () => void;
-  onRetryDelete: () => void;
-  onRetryCategorize: () => void;
+  onStop: () => void;
+  onRetry: () => void;
+  onRecover: () => void;
+  onRetryRefresh: () => void;
+  onAbandon: () => void;
 };
 
 export default function TransactionSelectionToolbar(props: Props) {
@@ -54,12 +44,14 @@ export default function TransactionSelectionToolbar(props: Props) {
     protectedCount,
     rerunCount,
     aiReady,
-    deleteOperation,
-    categorizeOperation,
+    operation,
   } = props;
-  const operation = categorizeOperation || deleteOperation;
   const running = operation?.status === 'running';
-  const locked = running || operation?.status === 'failed';
+  const locked = running || operation?.status === 'unresolved';
+  const unfinished =
+    operation &&
+    operation.status !== 'completed' &&
+    operation.remaining.length > 0;
   if (!selectedCount && !operation) return null;
   const progress = operation
     ? Math.round((operation.processed / operation.total) * 100)
@@ -90,7 +82,7 @@ export default function TransactionSelectionToolbar(props: Props) {
           </button>
         )}
         <span className="bulk-spacer" />
-        {selectedCount > 0 && !locked && (
+        {selectedCount > 0 && !locked && !unfinished && (
           <>
             <button
               className="secondary"
@@ -114,30 +106,34 @@ export default function TransactionSelectionToolbar(props: Props) {
             </button>
           </>
         )}
-        {deleteOperation?.status === 'running' && (
-          <button className="secondary" onClick={props.onStopDelete}>
+        {operation?.status === 'running' && (
+          <button className="secondary" onClick={props.onStop}>
             Stop after this batch
           </button>
         )}
-        {categorizeOperation?.status === 'running' && (
-          <button className="secondary" onClick={props.onStopCategorize}>
-            Stop after this batch
+        {operation?.status === 'unresolved' && (
+          <button className="secondary" onClick={props.onRecover}>
+            Recover sent batch
           </button>
         )}
-        {(deleteOperation?.status === 'failed' ||
-          deleteOperation?.status === 'stopped') &&
-          deleteOperation.remaining.length > 0 && (
-            <button className="secondary" onClick={props.onRetryDelete}>
-              Retry {deleteOperation.remaining.length} remaining
+        {(operation?.status === 'failed' || operation?.status === 'stopped') &&
+          operation.remaining.length > 0 &&
+          operation.retryable !== false && (
+            <button className="secondary" onClick={props.onRetry}>
+              {operation.staleRetry ? 'Refresh and retry' : 'Resume'}{' '}
+              {operation.remaining.length} remaining
             </button>
           )}
-        {(categorizeOperation?.status === 'failed' ||
-          categorizeOperation?.status === 'stopped') &&
-          categorizeOperation.remaining.length > 0 && (
-            <button className="secondary" onClick={props.onRetryCategorize}>
-              Retry {categorizeOperation.remaining.length} remaining
-            </button>
-          )}
+        {operation?.refreshError && (
+          <button className="secondary" onClick={props.onRetryRefresh}>
+            Retry refresh
+          </button>
+        )}
+        {unfinished && !locked && (
+          <button className="text-button" onClick={props.onAbandon}>
+            Abandon remaining work
+          </button>
+        )}
       </div>
       {operation && (
         <div className="bulk-progress">
@@ -148,12 +144,18 @@ export default function TransactionSelectionToolbar(props: Props) {
           <span>
             {running && <LoaderCircle className="spin" size={15} />}
             {operation.processed} of {operation.total} processed ·{' '}
-            {'deleted' in operation
+            {operation.kind === 'delete'
               ? `${operation.deleted} deleted${operation.unavailable ? ` · ${operation.unavailable} unavailable` : ''}`
               : `${operation.categorized} categorized · ${operation.protected} protected${operation.unavailable ? ` · ${operation.unavailable} unavailable` : ''}`}
           </span>
           {operation.error && (
             <span className="bulk-error">{operation.error}</span>
+          )}
+          {operation.refreshError && (
+            <span className="bulk-error">
+              Changes were saved, but the table could not refresh:{' '}
+              {operation.refreshError}
+            </span>
           )}
         </div>
       )}

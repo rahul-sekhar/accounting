@@ -2,11 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_CATEGORIZE_IDS,
-  beginCategorizeProgress,
   categorizeBatches,
   categorizeRequestHash,
-  commitCategorizeBatch,
-  haltCategorizeProgress,
   isCategorizationEligible,
   parseCategorizeRequest,
 } from '../lib/transaction-categorization.ts';
@@ -72,47 +69,12 @@ test('eligibility includes new and unreviewed AI rows only', () => {
   );
 });
 
-test('progress handles batches, protection, stop, and failures without retargeting', () => {
+test('categorization batching preserves the captured order', () => {
   const ids = Array.from({ length: 61 }, (_, i) => `t-${i}`);
   const batches = categorizeBatches(ids);
   assert.deepEqual(
     batches.map((batch) => batch.length),
     [60, 1],
   );
-  let progress = beginCategorizeProgress(ids);
-  progress = commitCategorizeBatch(progress, batches[0], {
-    categorizedIds: batches[0].slice(0, 58),
-    protectedIds: [batches[0][58]],
-    unavailableIds: [batches[0][59]],
-  });
-  assert.deepEqual(
-    {
-      processed: progress.processed,
-      categorized: progress.categorized,
-      protected: progress.protected,
-      unavailable: progress.unavailable,
-      remaining: progress.remaining,
-    },
-    {
-      processed: 60,
-      categorized: 58,
-      protected: 1,
-      unavailable: 1,
-      remaining: ['t-60'],
-    },
-  );
-  assert.equal(haltCategorizeProgress(progress, 'stopped').status, 'stopped');
-  assert.equal(
-    haltCategorizeProgress(progress, 'failed', 'bad output').error,
-    'bad output',
-  );
-  assert.throws(
-    () =>
-      commitCategorizeBatch(progress, batches[1], {
-        categorizedIds: [],
-        protectedIds: [],
-        unavailableIds: [],
-      }),
-    /incomplete/,
-  );
+  assert.deepEqual(batches.flat(), ids);
 });
