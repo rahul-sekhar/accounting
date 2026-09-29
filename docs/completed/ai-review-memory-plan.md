@@ -30,7 +30,7 @@ This is an implementation specification. Preserve the existing app, database, de
 | AI categorization | `app/api/categorize/route.ts` | Accepts up to 60 IDs; only processes `source='none'`; calls Responses with a strict JSON schema, `store:false`, and the configured model. |
 | Category definitions | `lib/categories-server.ts`, `app/api/categories/route.ts` | Combines default and user-defined categories; archived categories are retained but excluded from new assignments. |
 | Client | `app/dashboard.tsx`, `lib/banking.ts` | Category dropdown, derived needs-review state, account/month filters, and batched AI requests. |
-| Auth/API helpers | `app/chatgpt-auth.ts`, `lib/server.ts` | Identity comes from trusted server-side authentication. All data is scoped by user ID. |
+| Auth/API helpers | `app/auth.ts`, `lib/server.ts` | Identity comes from verified Cloudflare Access authentication. All data is scoped by user ID. |
 | Tests | `tests/banking.test.mjs`, `tests/category-mapping-smoke.mjs` | Pure-data tests and local synthetic integration tests. |
 
 Existing `Uncategorized` remains the permanent fallback. Existing categorization targets only never-categorized rows; preserve that eligibility rule for this task.

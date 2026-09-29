@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 import { categorizeTransactions } from '../lib/categorization-server.ts';
 import { categorizeRequestHash } from '../lib/transaction-categorization.ts';
 import { deleteRequestHash } from '../lib/transaction-deletion.ts';
@@ -686,10 +687,32 @@ test('context revision is captured before categories, targets, and memory', asyn
 test('a 60-target batch runs against a disposable workerd D1 runtime', async () => {
   const { Miniflare } = await import('miniflare');
   const runtime = new Miniflare({
-    modules: true,
-    script: 'export default { fetch() { return new Response("ok") } }',
-    compatibilityDate: '2026-05-22',
-    d1Databases: { DB: 'plan-7-categorization-test' },
+    workers: [
+      {
+        config: {
+          name: 'categorization-test',
+          compatibilityDate: '2026-09-28',
+          manifest: {
+            mainModule: 'index.js',
+            modulesRoot: fileURLToPath(root),
+            modules: {
+              'index.js': {
+                type: 'esm',
+                contents:
+                  'export default { fetch() { return new Response("ok") } }',
+              },
+            },
+          },
+          env: {
+            DB: {
+              type: 'd1',
+              name: 'plan-7-categorization-test',
+              id: 'plan-7-categorization-test',
+            },
+          },
+        },
+      },
+    ],
   });
   try {
     const db = await runtime.getD1Database('DB');

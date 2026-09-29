@@ -2,18 +2,13 @@ import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 
 const base = 'http://localhost:3000';
-const login = await fetch(base + '/signin-with-chatgpt?return_to=%2F', {
-  redirect: 'manual',
-});
-const cookie = login.headers.get('set-cookie').split(';')[0];
 async function req(path, method = 'GET', payload) {
   const started = performance.now();
   const response = await fetch(`${base}/api/${path}`, {
     method,
-    headers: {
-      cookie,
-      ...(payload ? { 'Content-Type': 'application/json', Origin: base } : {}),
-    },
+    headers: payload
+      ? { 'Content-Type': 'application/json', Origin: base }
+      : undefined,
     ...(payload ? { body: JSON.stringify(payload) } : {}),
   });
   const data = await response.json();

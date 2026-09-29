@@ -1,9 +1,9 @@
-import { getChatGPTUser } from '@/app/chatgpt-auth';
+import { getAuthUser } from '@/app/auth';
 export { AppError } from './errors';
 import { AppError } from './errors';
 export async function identity(request?: Request) {
-  const user = await getChatGPTUser();
-  if (!user) throw new AppError('Please sign in to access your accounts.', 401);
+  const user = await getAuthUser();
+  if (!user) throw new AppError('Authentication is required.', 401);
   if (request && request.method !== 'GET') {
     const origin = request.headers.get('origin');
     if (origin && origin !== new URL(request.url).origin)

@@ -2,16 +2,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { globSync } from 'node:fs';
 const base = process.env.BASE_URL || 'http://localhost:3000';
-const sign = await fetch(base + '/signin-with-chatgpt?return_to=%2F', {
-  redirect: 'manual',
-});
-assert.equal(sign.status, 302);
-const cookie = sign.headers.get('set-cookie').split(';')[0];
 async function req(path, method = 'GET', data, auth = true, origin = base) {
   const r = await fetch(base + '/api/' + path, {
     method,
     headers: {
-      ...(auth ? { cookie } : {}),
+      ...(!auth ? { 'X-Account-View-Local-Auth': 'disabled' } : {}),
       ...(data ? { 'Content-Type': 'application/json', Origin: origin } : {}),
     },
     ...(data ? { body: JSON.stringify(data) } : {}),
@@ -724,6 +719,6 @@ execFileSync('sqlite3', [localDatabase], {
   input: `PRAGMA foreign_keys=ON; DELETE FROM accounts WHERE id='${foreignAccountId}' AND user_id='other-test-user';`,
 });
 console.log(
-  'PASS: sign-in, account lifecycle, imports and retained outcomes, safe receipt-backed deletion and re-import, review replay protection, unavailable-AI fallback, unauthenticated and cross-origin requests.',
+  'PASS: local authentication, account lifecycle, imports and retained outcomes, safe receipt-backed deletion and re-import, review replay protection, unavailable-AI fallback, unauthenticated and cross-origin requests.',
 );
 console.log('QA account ID: ' + accountId);

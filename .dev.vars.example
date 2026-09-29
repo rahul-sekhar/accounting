@@ -1,0 +1,11 @@
+# Copy to .dev.vars for localhost development. Never configure LOCAL_AUTH_*
+# values on a deployed Worker.
+APP_ENV=development
+LOCAL_AUTH_ENABLED=true
+LOCAL_AUTH_USER_ID=developer
+LOCAL_AUTH_EMAIL=developer@example.test
+LOCAL_AUTH_NAME=Local Developer
+
+# Optional local AI configuration. Keep the real key only in ignored files.
+OPENAI_MODEL=gpt-4.1-mini
+# OPENAI_API_KEY=replace-with-a-development-key

@@ -1,14 +1,10 @@
 import assert from 'node:assert/strict';
 const base = 'http://localhost:3000';
-const login = await fetch(base + '/signin-with-chatgpt?return_to=%2F', {
-  redirect: 'manual',
-});
-const cookie = login.headers.get('set-cookie').split(';')[0];
 async function req(path, method = 'GET', payload, auth = true) {
   const r = await fetch(base + '/api/' + path, {
     method,
     headers: {
-      ...(auth ? { cookie } : {}),
+      ...(!auth ? { 'X-Account-View-Local-Auth': 'disabled' } : {}),
       ...(payload ? { 'Content-Type': 'application/json', Origin: base } : {}),
     },
     ...(payload ? { body: JSON.stringify(payload) } : {}),

@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "account-view",
+  "main": "vinext/server/fetch-handler",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "dist/client",
+    "not_found_handling": "none",
+    "binding": "ASSETS",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "account-view",
+      // Replace this placeholder after `wrangler d1 create account-view`.
+      "database_id": "45287522-74e6-4a0a-82ec-b7c0be2b926b",
+      "migrations_dir": "drizzle",
+    },
+  ],
+  "vars": {
+    "APP_ENV": "production",
+    "ACCESS_TEAM_DOMAIN": "https://rahul-accounting.cloudflareaccess.com",
+    "ACCESS_AUD": "ca1ecc6e29de85acee2aa6e3be4e645a3f69d3a7de2da57fc8eaac79363493e6",
+    "OPENAI_MODEL": "gpt-4.1-mini",
+  },
+}

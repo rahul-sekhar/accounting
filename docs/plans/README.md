@@ -21,6 +21,10 @@ These plans follow the six-part division approved by the user. Execute them in o
 
 [08 — Spread expenses across months](08-spread-expenses-across-months.md) designs editable monthly allocations for insurance, large purchases, and multi-month bills, plus a Monthly expenses report comparing Spread and As paid totals. Status: proposed; design and implementation plan only.
 
+## Infrastructure migration
+
+[09 — Standalone Cloudflare deployment](09-standalone-cloudflare-deployment.md) was implemented on 2026-09-28. It removes OpenAI Sites and ChatGPT authentication from the deployment path while retaining Vinext, Cloudflare Workers/D1, and the optional OpenAI Responses integration. It starts with an empty database and establishes Cloudflare Access, Wrangler, repeatable CLI deployment, and independent verification. No live Cloudflare resource or deployment was created. See the [Plan 9 completion note](09-standalone-cloudflare-deployment-completion.md) for evidence and required operator steps.
+
 ## Shared implementation rules
 
 Read [Implementation contracts](implementation-contracts.md) before any numbered plan. It resolves endpoint, retry, transaction, and test-harness choices shared across plans. Each numbered plan is a vertically complete change; implement its API, migration, UI, and tests together. Do not leave placeholder endpoints for a later plan.

@@ -48,7 +48,7 @@ export default function AppNavbar({
         {/* oxlint-disable-next-line next/no-html-link-for-pages -- auth requires a top-level navigation */}
         <a
           className="signout"
-          href="/signout-with-chatgpt?return_to=%2F"
+          href="/cdn-cgi/access/logout"
           target="_top"
         >
           Sign out
